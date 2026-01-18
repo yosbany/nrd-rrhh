@@ -28,6 +28,33 @@ function getMonthName(month) {
   return months[month - 1] || '';
 }
 
+// Check if employee was active (vigente) during a specific year
+function isEmployeeActiveInYear(employee, year) {
+  if (!employee) return false;
+  
+  const yearStart = new Date(year, 0, 1); // January 1 of the year
+  const yearEnd = new Date(year, 11, 31); // December 31 of the year
+  
+  // Check startDate: employee must have started before or during the year
+  if (employee.startDate) {
+    const startDate = new Date(employee.startDate);
+    if (startDate > yearEnd) {
+      return false; // Employee started after the year ended
+    }
+  }
+  
+  // Check endDate: if exists, employee must have ended after or during the year
+  if (employee.endDate) {
+    const endDate = new Date(employee.endDate);
+    if (endDate < yearStart) {
+      return false; // Employee ended before the year started
+    }
+  }
+  
+  // Employee was active during the year
+  return true;
+}
+
 // Helper functions for decimal number handling with comma
 function parseDecimalWithComma(value) {
   if (!value || value === '') return null;
@@ -274,11 +301,12 @@ function calculateEmployeeSummary(employeeId) {
   const monthsWorked = yearSalaries.length;
 
       // Calculate accumulated vacation days based on employee start date
+      // Legal rule: La licencia se genera DESPUÉS de trabajar un año completo
       // When viewing year X, calculate for year X-1 (displayYear)
       // Example: viewing 2025, calculate for 2024 (based on years worked until Dec 31, 2023)
       let daysAccumulated = 0;
       try {
-        const employee = employeesData[employeeId];
+        // employee already declared above (line 216)
         if (employee && employee.startDate) {
           const start = new Date(employee.startDate);
           // displayYear is already calculated at function start: currentYear - 1
@@ -298,56 +326,165 @@ function calculateEmployeeSummary(employeeId) {
             yearEnd: yearEnd.toISOString()
           });
       
-      // Calculate months worked in the current year
-      let monthsWorkedInYear = 0;
-      if (start <= yearEnd) {
-        const actualStart = start > yearStart ? start : yearStart;
-        const actualEnd = yearEnd;
-        
-        // Calculate months difference: count from start month to end month (inclusive)
-        let monthsDiff = (actualEnd.getFullYear() - actualStart.getFullYear()) * 12;
-        monthsDiff += actualEnd.getMonth() - actualStart.getMonth();
-        
-        // Always add 1 to include both start and end months
-        // This counts the month as worked if the employee worked any part of it
-        monthsDiff++;
-        
-        monthsWorkedInYear = Math.max(0, monthsDiff);
-      }
-      
-      // Check if employee worked the full year (12 months)
-      const workedFullYear = monthsWorkedInYear >= 12;
-      
-      if (!workedFullYear && monthsWorkedInYear > 0) {
-        // Employee didn't work the full year: calculate proportionally
-        // Legal: 1.66 days per month, use Math.floor() NOT Math.ceil()
-        daysAccumulated = Math.floor(monthsWorkedInYear * 1.66);
-      } else {
-        // Employee worked the full year: calculate based on years of service
-        // Calculate complete years worked up to the end of the calculation year
-        // For display year 2025, calculate years worked until Dec 31, 2024
-        let yearsWorked = calculationYearEnd.getFullYear() - start.getFullYear();
-        const monthDiff = calculationYearEnd.getMonth() - start.getMonth();
-        const dayDiff = calculationYearEnd.getDate() - start.getDate();
-        
-        if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
-          yearsWorked--;
-        }
-        
-        yearsWorked = Math.max(0, yearsWorked);
-        
-        // Legal formula: 20 + Math.floor((yearsWorked - 1) / 4)
-        daysAccumulated = 20 + Math.floor((yearsWorked - 1) / 4);
-        
-        console.log('Days accumulated calculated', {
-          employeeId,
-          displayYear,
-          yearsWorked,
-          daysAccumulated,
-          workedFullYear,
-          monthsWorkedInYear
-        });
-      }
+          // Calculate months worked in displayYear
+          // This is based ONLY on dates, not on salaries registered
+          let monthsWorkedInYear = 0;
+          if (start <= yearEnd) {
+            // If employee started before or during the year, calculate months worked
+            const actualStart = start > yearStart ? start : yearStart;
+            const actualEnd = yearEnd;
+            
+            // If employee started before the year, they worked the full year (12 months)
+            if (start < yearStart) {
+              monthsWorkedInYear = 12;
+            } else {
+              // Employee started during the year: calculate months from start to end of year
+              // Calculate months difference: count from start month to end month (inclusive)
+              let monthsDiff = (actualEnd.getFullYear() - actualStart.getFullYear()) * 12;
+              monthsDiff += actualEnd.getMonth() - actualStart.getMonth();
+              
+              // Always add 1 to include both start and end months
+              // This counts the month as worked if the employee worked any part of it
+              monthsDiff++;
+              
+              monthsWorkedInYear = Math.max(0, monthsDiff);
+            }
+          }
+          
+          // CRITICAL: Check if employee started during displayYear
+          // If employee started during displayYear, calculate days based on months worked
+          // The months worked are calculated from startDate to end of year
+          if (start >= yearStart && start <= yearEnd) {
+            // Employee started during displayYear
+            // Check if they worked the full year (12 months) based on date calculation only
+            const workedFullYear = monthsWorkedInYear >= 12;
+            
+            if (workedFullYear) {
+              // Employee worked the full year: calculate based on years of service
+              // When employee worked the full displayYear, they have at least 1 complete year
+              // Calculate years worked up to the end of displayYear
+              const displayYearEnd = new Date(displayYear, 11, 31); // December 31 of displayYear
+              let yearsWorkedForFormula = displayYearEnd.getFullYear() - start.getFullYear();
+              const monthDiffForFormula = displayYearEnd.getMonth() - start.getMonth();
+              const dayDiffForFormula = displayYearEnd.getDate() - start.getDate();
+              
+              if (monthDiffForFormula < 0 || (monthDiffForFormula === 0 && dayDiffForFormula < 0)) {
+                yearsWorkedForFormula--;
+              }
+              
+              yearsWorkedForFormula = Math.max(1, yearsWorkedForFormula); // At least 1 year if worked full year
+              
+              // Legal formula: 20 + Math.floor((yearsWorked - 1) / 4)
+              daysAccumulated = 20 + Math.floor((yearsWorkedForFormula - 1) / 4);
+              
+              console.log('Employee started during displayYear but worked full year - year-based calculation', {
+                employeeId,
+                displayYear,
+                yearsWorkedForFormula,
+                daysAccumulated,
+                monthsWorkedInYear,
+                startDate: employee.startDate
+              });
+            } else if (monthsWorkedInYear > 0) {
+              // Employee didn't work the full year: calculate proportionally
+              // Legal: 1.66 days per month, use Math.floor()
+              daysAccumulated = Math.floor(monthsWorkedInYear * 1.66);
+              console.log('Employee started during displayYear - proportional calculation', {
+                employeeId,
+                displayYear,
+                monthsWorkedInYear,
+                daysAccumulated,
+                startDate: employee.startDate,
+                yearStart: yearStart.toISOString(),
+                yearEnd: yearEnd.toISOString()
+              });
+            } else {
+              daysAccumulated = 0;
+              console.log('Employee started during displayYear but monthsWorkedInYear is 0', {
+                employeeId,
+                displayYear,
+                startDate: employee.startDate
+              });
+            }
+          } else {
+            // Employee started before displayYear - calculate based on years worked
+            // Calculate complete years worked up to the end of the calculation year
+            // For display year 2025, calculate years worked until Dec 31, 2024
+            let yearsWorked = calculationYearEnd.getFullYear() - start.getFullYear();
+            const monthDiff = calculationYearEnd.getMonth() - start.getMonth();
+            const dayDiff = calculationYearEnd.getDate() - start.getDate();
+            
+            if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+              yearsWorked--;
+            }
+            
+            yearsWorked = Math.max(0, yearsWorked);
+            
+            // Check if employee worked the full year (12 months) based on date calculation only
+            // If employee started before the year, they definitely worked the full year
+            const workedFullYear = start < yearStart || monthsWorkedInYear >= 12;
+            
+            if (workedFullYear) {
+              // Employee worked the full year: calculate based on years of service
+              // When employee worked the full displayYear, they have at least 1 complete year
+              // Calculate years worked up to the end of displayYear (not calculationYear)
+              const displayYearEnd = new Date(displayYear, 11, 31); // December 31 of displayYear
+              let yearsWorkedForFormula = displayYearEnd.getFullYear() - start.getFullYear();
+              const monthDiffForFormula = displayYearEnd.getMonth() - start.getMonth();
+              const dayDiffForFormula = displayYearEnd.getDate() - start.getDate();
+              
+              if (monthDiffForFormula < 0 || (monthDiffForFormula === 0 && dayDiffForFormula < 0)) {
+                yearsWorkedForFormula--;
+              }
+              
+              yearsWorkedForFormula = Math.max(1, yearsWorkedForFormula); // At least 1 year if worked full year
+              
+              // Legal formula: 20 + Math.floor((yearsWorked - 1) / 4)
+              daysAccumulated = 20 + Math.floor((yearsWorkedForFormula - 1) / 4);
+              
+              console.log('Employee started before displayYear and worked full year - year-based calculation', {
+                employeeId,
+                displayYear,
+                yearsWorked,
+                yearsWorkedForFormula,
+                daysAccumulated,
+                monthsWorkedInYear,
+                startDate: employee.startDate,
+                startBeforeYear: start < yearStart
+              });
+            } else if (monthsWorkedInYear > 0) {
+              // Employee didn't work the full year: calculate proportionally
+              // Legal: 1.66 days per month, use Math.floor() NOT Math.ceil()
+              // This applies when employee already has years worked but didn't complete the full displayYear
+              daysAccumulated = Math.floor(monthsWorkedInYear * 1.66);
+              
+              console.log('Employee started before displayYear but worked partial year - proportional calculation', {
+                employeeId,
+                displayYear,
+                monthsWorkedInYear,
+                daysAccumulated,
+                startDate: employee.startDate
+              });
+            } else {
+              // Employee didn't work during displayYear
+              daysAccumulated = 0;
+              
+              console.log('Employee started before displayYear but didn\'t work during displayYear', {
+                employeeId,
+                displayYear,
+                startDate: employee.startDate
+              });
+            }
+            
+            console.log('Days accumulated calculated', {
+              employeeId,
+              displayYear,
+              yearsWorked,
+              daysAccumulated,
+              workedFullYear,
+              monthsWorkedInYear
+            });
+          }
     } else {
       // Fallback to old calculation if no start date
       // Legal: Use proportional calculation: 1.66 days per month, use Math.floor()
@@ -390,79 +527,107 @@ function calculateEmployeeSummary(employeeId) {
   
   // Calculate days taken
   // Legal: La licencia se imputa al año en que se genera
-  // Solo descontar días gozados con cargo a ese año (displayYear)
-  // NO descontar licencias de años futuros
+  // Para el cálculo del saldo, descontar días gozados del displayYear
   const daysTakenDisplayYear = yearLicenses.reduce((sum, license) => sum + (license.daysTaken || 0), 0);
   
-  // Calculate unused vacation days
-  // Only subtract days taken from displayYear (the year being calculated)
-  const daysRemaining = Math.max(0, daysAccumulated - daysTakenDisplayYear);
+  // Also get days taken from currentYear for display purposes
+  const currentYearLicenses = Object.values(licensesData).filter(l => 
+    l.employeeId === employeeId && l.year === currentYear
+  );
+  const daysTakenCurrentYear = currentYearLicenses.reduce((sum, license) => sum + (license.daysTaken || 0), 0);
   
-  // Get all salaries for this employee to find the last jornal
-  // Reuse allEmployeeSalaries already declared above for aguinaldo calculation
-  // Filter salaries from currentYear (the year being viewed) and sort by month descending
-  const viewingYearSalaries = allEmployeeSalaries
+  // Calculate unused vacation days (saldo)
+  // Subtract days taken from both displayYear and currentYear to get the actual balance
+  // The balance should reflect days accumulated minus all days taken (from both years)
+  const daysRemaining = Math.max(0, daysAccumulated - daysTakenDisplayYear - daysTakenCurrentYear);
+  
+  // Get salaries for currentYear to calculate jornal for vacation salary
+  // These are calculated based on current year salaries, not displayYear
+  const currentYearSalariesForCalculation = allEmployeeSalaries
     .filter(s => s.year === currentYear)
     .sort((a, b) => (b.month || 0) - (a.month || 0));
   
-  // Find the last salary with dailyWage
-  const lastSalaryWithJornal = viewingYearSalaries.find(s => s.dailyWage && s.dailyWage > 0);
+  // Calculate average daily wage from currentYear salaries (including extras)
+  // This matches the calculation method for license not taken
+  let averageDailyWageCurrentYear = 0;
+  if (currentYearSalariesForCalculation.length > 0) {
+    const totalHaberesCurrentYear = currentYearSalariesForCalculation.reduce((sum, s) => {
+      const base = parseFloat(s.baseSalary30Days) || 0;
+      const extras = parseFloat(s.extras) || 0;
+      return sum + (base + extras);
+    }, 0);
+    const avgMonthlyCurrentYear = totalHaberesCurrentYear / currentYearSalariesForCalculation.length;
+    averageDailyWageCurrentYear = avgMonthlyCurrentYear / 30;
+  }
+  
+  // Also try to get direct dailyWage from last salary (fallback)
+  const lastSalaryWithJornal = currentYearSalariesForCalculation.find(s => s.dailyWage && s.dailyWage > 0);
   const lastJornal = lastSalaryWithJornal ? parseFloat(lastSalaryWithJornal.dailyWage) : 0;
+  
+  // Use average daily wage (with extras) if available, otherwise use direct jornal
+  const dailyWageForVacationSalary = averageDailyWageCurrentYear > 0 ? averageDailyWageCurrentYear : lastJornal;
   
   // Legal: Licencia No Gozada y Salario Vacacional son conceptos diferentes
   // - Licencia No Gozada: Solo se calcula al egreso (usar promedio últimos 12 meses)
   // - Salario Vacacional: Solo se calcula cuando se goza la licencia
   
-  // Check if employee has endDate (egreso) - employee already declared above
-  const hasEndDate = employee && employee.endDate;
+  // hasEndDate already declared above (line 217)
   
   let licenseNotTakenSalary = 0;
   let vacationSalary = 0;
   
-  // Get vacation record for this year
-  const vacation = Object.values(vacationsData).find(v => 
-    v.employeeId === employeeId && v.year === displayYear
-  );
+  // vacation already declared above (line 211)
   
-  if (hasEndDate) {
-    // Employee has terminated - calculate license not taken
-    if (vacation && vacation.isLicenseNotTaken) {
-      licenseNotTakenSalary = parseFloat(vacation.amount) || 0;
-    } else if (vacation && vacation.amount > 0) {
-      // If vacation record exists but doesn't have flag, check if it's license not taken
-      licenseNotTakenSalary = parseFloat(vacation.amount) || 0;
-    } else if (daysRemaining > 0) {
-      // Calculate license not taken if not already calculated
-      // Use average of last 12 months salaries
-      const allEmployeeSalaries = Object.values(salariesData).filter(s => 
-        s.employeeId === employeeId
-      );
-      const sortedSalaries = allEmployeeSalaries
-        .filter(s => s && s.year && s.month)
-        .sort((a, b) => {
-          if (a.year !== b.year) return b.year - a.year;
-          return b.month - a.month;
-        })
-        .slice(0, 12); // Last 12 months
-      
-      if (sortedSalaries.length > 0) {
-        const totalHaberes = sortedSalaries.reduce((sum, salary) => {
-          const base = parseFloat(salary.baseSalary30Days) || 0;
-          const extras = parseFloat(salary.extras) || 0;
-          return sum + (base + extras);
-        }, 0);
-        const avgMonthlySalary = totalHaberes / sortedSalaries.length;
-        const averageDailyWage = avgMonthlySalary / 30;
-        licenseNotTakenSalary = daysRemaining * averageDailyWage;
-      }
+  // Calculate license not taken (informative for all employees with remaining days)
+  // This shows what the license not taken would be if the employee terminates
+  // IMPORTANT: Only calculate if there are salaries in the current year
+  // If no salaries exist for the current year, show $0,00
+  const hasCurrentYearSalaries = allEmployeeSalaries.some(s => s && s.year === currentYear);
+  
+  if (daysRemaining > 0 && hasCurrentYearSalaries) {
+    // Use average of last 12 months salaries (from current year and previous)
+    const sortedSalaries = allEmployeeSalaries
+      .filter(s => s && s.year && s.month)
+      .sort((a, b) => {
+        if (a.year !== b.year) return b.year - a.year;
+        return b.month - a.month;
+      })
+      .slice(0, 12); // Last 12 months
+    
+    if (sortedSalaries.length > 0) {
+      const totalHaberes = sortedSalaries.reduce((sum, salary) => {
+        const base = parseFloat(salary.baseSalary30Days) || 0;
+        const extras = parseFloat(salary.extras) || 0;
+        return sum + (base + extras);
+      }, 0);
+      const avgMonthlySalary = totalHaberes / sortedSalaries.length;
+      const averageDailyWage = avgMonthlySalary / 30;
+      licenseNotTakenSalary = daysRemaining * averageDailyWage;
     }
-  } else {
-    // Employee is active - calculate vacation salary only if license is being taken
-    if (vacation && !vacation.isLicenseNotTaken) {
+  }
+  
+  // If employee has terminated, prefer the calculated value from vacation record if available
+  if (hasEndDate) {
+    if (vacation && vacation.isLicenseNotTaken) {
+      licenseNotTakenSalary = parseFloat(vacation.amount) || licenseNotTakenSalary;
+    } else if (vacation && vacation.amount > 0 && vacation.isLicenseNotTaken !== false) {
+      // If vacation record exists, prefer it (might be already calculated)
+      licenseNotTakenSalary = parseFloat(vacation.amount) || licenseNotTakenSalary;
+    }
+  }
+  
+  // Calculate vacation salary (for active employees)
+  // Both license not taken and vacation salary are based on daysRemaining (saldo de días)
+  if (!hasEndDate) {
+    // Employee is active - calculate vacation salary based on saldo de días
+    if (vacation && !vacation.isLicenseNotTaken && vacation.year === displayYear) {
+      // Use amount from vacation record if available for displayYear
       vacationSalary = parseFloat(vacation.amount) || 0;
-    } else if (daysTakenDisplayYear > 0 && lastJornal > 0) {
-      // Calculate vacation salary for days being taken this year
-      vacationSalary = daysTakenDisplayYear * lastJornal;
+    } else if (daysRemaining > 0 && dailyWageForVacationSalary > 0) {
+      // Calculate vacation salary based on saldo de días (remaining days)
+      // Use average daily wage (including extras) to match license not taken calculation
+      // This shows what the vacation salary would be based on the remaining days
+      vacationSalary = daysRemaining * dailyWageForVacationSalary;
     }
   }
   
@@ -475,6 +640,7 @@ function calculateEmployeeSummary(employeeId) {
   return {
     daysAccumulated, // Keep as number for calculations
     daysTaken: daysTakenDisplayYear, // Days taken only from displayYear (legal: imputa al año que se genera)
+    daysTakenCurrentYear, // Days taken from currentYear for display
     daysRemaining, // Keep as number for calculations
     vacationSalary: Math.round(vacationSalary * 100) / 100, // Round to 2 decimals
     licenseNotTakenSalary: Math.round(licenseNotTakenSalary * 100) / 100, // Round to 2 decimals
@@ -631,7 +797,23 @@ async function loadPayrollItems() {
     const cardsContainer = document.createElement('div');
     cardsContainer.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
     
-    employees.forEach(employee => {
+    // Filter employees: only show those who were active (vigente) in the selected year
+    const activeEmployees = employees.filter(employee => 
+      isEmployeeActiveInYear(employee, currentYear)
+    );
+    
+    if (activeEmployees.length === 0) {
+      cardsContainer.innerHTML = `
+        <div class="col-span-full text-center py-12 border border-gray-200 rounded-lg p-8">
+          <p class="text-gray-600 mb-2">No hay empleados vigentes en ${currentYear}</p>
+          <p class="text-xs text-gray-500">Los empleados deben haber estado activos durante el año seleccionado</p>
+        </div>
+      `;
+      payrollContent.appendChild(cardsContainer);
+      return;
+    }
+    
+    activeEmployees.forEach(employee => {
       const summary = calculateEmployeeSummary(employee.id);
       const totalSummary = calculateEmployeeTotalSummary(employee.id);
       
@@ -649,17 +831,17 @@ async function loadPayrollItems() {
         
         <div class="space-y-1.5 text-xs">
           <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Días Acumulados ${displayYear}:</span>
+            <span class="text-gray-600">Días Acumulados:</span>
             <span class="font-medium">${formatNumber(summary.daysAccumulated, 2)}</span>
           </div>
           
           <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Licencia No Gozada ${displayYear}:</span>
+            <span class="text-gray-600">Licencia No Gozada:</span>
             <span class="font-medium text-green-600">${formatCurrency(summary.licenseNotTakenSalary || 0)}</span>
           </div>
           
           <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Salario Vacacional ${displayYear}:</span>
+            <span class="text-gray-600">Salario Vacacional:</span>
             <span class="font-medium text-red-600">${formatCurrency(summary.vacationSalary)}</span>
           </div>
           
@@ -791,19 +973,50 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
         </div>
       </div>
       
+      <!-- Employee Dates Info -->
+      <div class="px-4 sm:px-6 pt-4 pb-2 border-b border-gray-200 bg-gray-50">
+        <div class="flex flex-wrap gap-4 text-sm">
+          ${employee.startDate ? `
+            <div class="flex items-center gap-2">
+              <span class="text-gray-600 font-medium">Fecha de Ingreso:</span>
+              <span class="text-gray-800">${new Date(employee.startDate).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+            </div>
+          ` : ''}
+          ${employee.endDate ? `
+            <div class="flex items-center gap-2">
+              <span class="text-gray-600 font-medium">Fecha de Egreso:</span>
+              <span class="text-gray-800">${new Date(employee.endDate).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+      
       <div class="p-4 sm:p-6 space-y-6">
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
           <div class="bg-gray-50 p-3 rounded border border-gray-200">
-            <div class="text-xs text-gray-600 mb-1">Días Acumulados ${displayYear}:</div>
-            <div class="text-lg font-medium">${formatNumber(summary.daysAccumulated, 2)}</div>
+            <div class="text-xs text-gray-600 mb-2 font-medium">Día de Licencia</div>
+            <div class="space-y-1.5">
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-gray-500">Días Acumulados:</span>
+                <span class="text-sm font-medium">${formatNumber(summary.daysAccumulated, 2)}</span>
+              </div>
+              <div class="flex justify-between items-center">
+                <span class="text-xs text-gray-500">Días Gozados:</span>
+                <span class="text-sm font-medium">${formatNumber(summary.daysTakenCurrentYear || 0, 2)}</span>
+              </div>
+              <div class="flex justify-between items-center pt-1 border-t border-gray-200">
+                <span class="text-xs text-gray-500">Saldo de Días ${currentYear}:</span>
+                <span class="text-sm font-medium">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)), 2)}</span>
+              </div>
+            </div>
           </div>
           <div class="bg-green-50 p-3 rounded border border-green-200">
-            <div class="text-xs text-gray-600 mb-1">Licencia No Gozada ${displayYear}:</div>
+            <div class="text-xs text-gray-600 mb-1">Licencia No Gozada:</div>
             <div class="text-lg font-medium text-green-600">${formatCurrency(summary.licenseNotTakenSalary || 0)}</div>
           </div>
           <div class="bg-red-50 p-3 rounded border border-red-200">
-            <div class="text-xs text-gray-600 mb-1">Salario Vacacional ${displayYear}:</div>
+            <div class="text-xs text-gray-600 mb-1">Salario Vacacional:</div>
             <div class="text-lg font-medium text-red-600">${formatCurrency(summary.vacationSalary)}</div>
           </div>
           <div class="bg-yellow-50 p-3 rounded border border-yellow-200">
@@ -848,10 +1061,16 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
                       ${salary.extras ? ` | Extras: ${formatCurrency(salary.extras)}` : ''}
                     </div>
                   </div>
-                  <button class="edit-salary-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
-                    data-salary-id="${salary.id}">
-                    Editar
-                  </button>
+                  <div class="flex gap-2">
+                    <button class="edit-salary-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
+                      data-salary-id="${salary.id}">
+                      Editar
+                    </button>
+                    <button class="delete-salary-btn px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors" 
+                      data-salary-id="${salary.id}">
+                      Eliminar
+                    </button>
+                  </div>
                 </div>
               `).join('');
             })()}
@@ -894,10 +1113,16 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
                       </div>
                     ` : ''}
                   </div>
-                  <button class="edit-license-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
-                    data-license-id="${license.id}">
-                    Editar
-                  </button>
+                  <div class="flex gap-2">
+                    <button class="edit-license-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
+                      data-license-id="${license.id}">
+                      Editar
+                    </button>
+                    <button class="delete-license-btn px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors" 
+                      data-license-id="${license.id}">
+                      Eliminar
+                    </button>
+                  </div>
                 </div>
               `).join('');
             })()}
@@ -1036,6 +1261,96 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       } finally {
         hideSpinner();
         btn.disabled = false;
+      }
+    });
+  });
+  
+  // Delete salary buttons
+  document.querySelectorAll('.delete-salary-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      const salaryId = e.target.dataset.salaryId;
+      const salary = Object.values(salariesData).find(s => s.id === salaryId);
+      
+      if (!salary) {
+        await showError('No se encontró el salario');
+        return;
+      }
+      
+      const monthName = getMonthName(salary.month);
+      const confirmed = await showConfirm('Eliminar Salario', `¿Está seguro de eliminar el salario de ${monthName} ${salary.year}?`);
+      
+      if (!confirmed) return;
+      
+      btn.disabled = true;
+      showSpinner('Eliminando salario...');
+      
+      try {
+        await nrd.salaries.delete(salaryId);
+        
+        // Recalculate payroll items
+        if (typeof window.recalculatePayrollItems === 'function') {
+          try {
+            await window.recalculatePayrollItems(employeeId, salary.year);
+          } catch (calcError) {
+            logger.warn('Error recalculating payroll items after delete (non-blocking)', { employeeId, year: salary.year, error: calcError });
+          }
+        }
+        
+        // Reload employee details
+        await showEmployeeDetails(employeeId, 'Salario eliminado exitosamente');
+      } catch (error) {
+        console.error('Error deleting salary', error);
+        await showError('Error al eliminar el salario: ' + (error.message || 'Error desconocido'));
+        btn.disabled = false;
+      } finally {
+        hideSpinner();
+      }
+    });
+  });
+  
+  // Delete license buttons
+  document.querySelectorAll('.delete-license-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      const licenseId = e.target.dataset.licenseId;
+      const license = Object.values(licensesData).find(l => l.id === licenseId);
+      
+      if (!license) {
+        await showError('No se encontró la licencia');
+        return;
+      }
+      
+      const monthName = license.month ? getMonthName(license.month) + ' ' : '';
+      const confirmed = await showConfirm('Eliminar Licencia', `¿Está seguro de eliminar la licencia de ${monthName}${license.year} (${license.daysTaken || 0} días)?`);
+      
+      if (!confirmed) return;
+      
+      btn.disabled = true;
+      showSpinner('Eliminando licencia...');
+      
+      try {
+        await nrd.licenses.delete(licenseId);
+        
+        // Recalculate payroll items
+        if (typeof window.recalculatePayrollItems === 'function') {
+          try {
+            await window.recalculatePayrollItems(employeeId, license.year);
+          } catch (calcError) {
+            logger.warn('Error recalculating payroll items after delete (non-blocking)', { employeeId, year: license.year, error: calcError });
+          }
+        }
+        
+        // Reload employee details
+        await showEmployeeDetails(employeeId, 'Licencia eliminada exitosamente');
+      } catch (error) {
+        console.error('Error deleting license', error);
+        await showError('Error al eliminar la licencia: ' + (error.message || 'Error desconocido'));
+        btn.disabled = false;
+      } finally {
+        hideSpinner();
       }
     });
   });

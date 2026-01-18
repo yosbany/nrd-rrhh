@@ -7,7 +7,7 @@
   <title>NRD RRHH</title>
   <link rel="manifest" href="manifest.json">
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="styles.css?v=1768752433727">
+  <link rel="stylesheet" href="styles.css?v=1768756104767">
   <meta name="theme-color" content="#dc2626">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -140,7 +140,7 @@
   </div>
 
   <!-- Custom Modal -->
-  <div id="custom-modal" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+  <div id="custom-modal" class="fixed inset-0 bg-black/50 z-[60] hidden flex items-center justify-center p-4">
     <div class="bg-white rounded-lg max-w-md w-full border border-gray-200 shadow-lg">
       <div class="p-4 sm:p-6">
         <h3 id="modal-title" class="text-lg sm:text-xl font-light mb-3 sm:mb-4 text-black"></h3>
@@ -158,7 +158,7 @@
   </div>
 
   <!-- Custom Alert -->
-  <div id="custom-alert" class="fixed inset-0 bg-black/50 z-50 hidden flex items-center justify-center p-4">
+  <div id="custom-alert" class="fixed inset-0 bg-black/50 z-[60] hidden flex items-center justify-center p-4">
     <div class="bg-white rounded-lg max-w-md w-full border border-gray-200 shadow-lg">
       <div class="p-4 sm:p-6">
         <h3 id="alert-title" class="text-lg sm:text-xl font-light mb-3 sm:mb-4 text-black"></h3>
@@ -200,12 +200,12 @@
   </script>
   
   <!-- App Scripts -->
-  <script src="modal.js?v=1768752433727"></script>
-  <script src="auth.js?v=1768752433727"></script>
-  <script src="tabs/dashboard.js?v=1768752433727"></script>
+  <script src="modal.js?v=1768756104767"></script>
+  <script src="auth.js?v=1768756104767"></script>
+  <script src="tabs/dashboard.js?v=1768756104767"></script>
   <script src="utils/payroll-calculations.js"></script>
   <script src="tabs/payroll-items.js"></script>
-  <script src="app.js?v=1768752433727"></script>
+  <script src="app.js?v=1768756104767"></script>
 
   <script>
     // Global error handler
@@ -224,7 +224,7 @@
     // Register service worker
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js?v=1768752433727')
+        navigator.serviceWorker.register('service-worker.js?v=1768756104767')
           .then(reg => {
             console.log('Service Worker registered');
             reg.update();
