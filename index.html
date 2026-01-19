@@ -7,7 +7,7 @@
   <title>NRD RRHH</title>
   <link rel="manifest" href="manifest.json">
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="styles.css?v=1768756104767">
+  <link rel="stylesheet" href="styles.css?v=1768848625068">
   <meta name="theme-color" content="#dc2626">
   <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
   <link rel="apple-touch-icon" href="icon-192.png">
@@ -109,10 +109,6 @@
 
       <!-- Payroll Items View -->
       <div id="payroll-items-view" class="view space-y-3 sm:space-y-4 hidden">
-        <div class="mb-3 sm:mb-4">
-          <h2 class="text-lg sm:text-xl font-light text-gray-800 mb-2">Partidas Salariales</h2>
-          <p class="text-sm text-gray-600">Resumen de partidas salariales por empleado</p>
-        </div>
         <div id="payroll-items-content">
           <p class="text-gray-500 text-sm">Cargando partidas salariales...</p>
         </div>
@@ -200,12 +196,12 @@
   </script>
   
   <!-- App Scripts -->
-  <script src="modal.js?v=1768756104767"></script>
-  <script src="auth.js?v=1768756104767"></script>
-  <script src="tabs/dashboard.js?v=1768756104767"></script>
+  <script src="modal.js?v=1768848625068"></script>
+  <script src="auth.js?v=1768848625068"></script>
+  <script src="tabs/dashboard.js?v=1768848625068"></script>
   <script src="utils/payroll-calculations.js"></script>
   <script src="tabs/payroll-items.js"></script>
-  <script src="app.js?v=1768756104767"></script>
+  <script src="app.js?v=1768848625068"></script>
 
   <script>
     // Global error handler
@@ -224,7 +220,7 @@
     // Register service worker
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js?v=1768756104767')
+        navigator.serviceWorker.register('service-worker.js?v=1768848625068')
           .then(reg => {
             console.log('Service Worker registered');
             reg.update();

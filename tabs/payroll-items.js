@@ -13,6 +13,7 @@ let vacationsData = {};
 let aguinaldoData = {};
 let currentYear = new Date().getFullYear();
 let selectedEmployeeId = null;
+let filteredEmployeeId = null; // For employee filter in payroll items view
 
 // Helper function to escape HTML
 function escapeHtml(text) {
@@ -71,26 +72,103 @@ function formatDecimalWithComma(value) {
 }
 
 // Format number with comma for decimals and dot for thousands
-function formatNumber(value, decimals = 2) {
+// Always round to integer (0 decimals) and show as ,00
+function formatNumber(value, decimals = 0) {
   if (value === null || value === undefined || isNaN(value)) return '0,00';
-  const num = parseFloat(value);
+  const num = Math.round(parseFloat(value)); // Round to nearest integer
   if (isNaN(num)) return '0,00';
   
-  // Split into integer and decimal parts
-  const parts = num.toFixed(decimals).split('.');
-  const integerPart = parts[0];
-  const decimalPart = parts[1] || '';
-  
   // Add thousand separators (dots) to integer part
-  const formattedInteger = integerPart.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  const formattedInteger = num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   
-  // Return with comma for decimal separator
-  return decimals > 0 ? `${formattedInteger},${decimalPart}` : formattedInteger;
+  // Always return with ,00 for consistency
+  return `${formattedInteger},00`;
 }
 
 // Format currency with $ symbol
-function formatCurrency(value, decimals = 2) {
+// Always round to integer (0 decimals) and show as ,00
+function formatCurrency(value, decimals = 0) {
   return `$${formatNumber(value, decimals)}`;
+}
+
+// Helper functions to generate formula tooltips for payroll calculations
+function getDaysAccumulatedFormula(summary, currentYear) {
+  return `Días acumulados para ${currentYear}:\n` +
+    `- Basado en años de servicio hasta fin de ${currentYear - 1}\n` +
+    `- Fórmula: 20 días base + Math.floor((años trabajados - 1) / 4)\n` +
+    `- Si trabajó año completo: cálculo por años\n` +
+    `- Si trabajó parcial: Math.floor(meses trabajados × 1.66)`;
+}
+
+function getDaysRemainingFormula(summary, currentYear) {
+  return `Saldo de días:\n` +
+    `- Fórmula: Días Acumulados - Días Gozados\n` +
+    `- Días Acumulados: ${summary.daysAccumulated || 0}\n` +
+    `- Días Gozados: ${summary.daysTakenCurrentYear || 0}\n` +
+    `- Resultado: ${Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0))}`;
+}
+
+function getVacationSalaryFormula(summary, lastSalaryInfo) {
+  if (!lastSalaryInfo || !lastSalaryInfo.dailyWage) {
+    return `Salario Vacacional:\n` +
+      `- Fórmula: Días Restantes × Jornal Diario\n` +
+      `- Días Restantes: ${summary.daysRemaining || 0}\n` +
+      `- Jornal Diario: Último salario registrado del año actual\n` +
+      `- Se calcula basado en el último recibo de salario del año`;
+  }
+  
+  return `Salario Vacacional:\n` +
+    `- Fórmula: Días Restantes × Jornal Diario\n` +
+    `- Días Restantes: ${summary.daysRemaining || 0}\n` +
+    `- Jornal Diario: $${formatNumber(lastSalaryInfo.dailyWage)}\n` +
+    `- Último salario: ${getMonthName(lastSalaryInfo.month)} ${lastSalaryInfo.year}\n` +
+    `- Cálculo: ${summary.daysRemaining || 0} × $${formatNumber(lastSalaryInfo.dailyWage)} = $${formatNumber((summary.daysRemaining || 0) * lastSalaryInfo.dailyWage)}`;
+}
+
+function getLicenseNotTakenFormula(summary, lastSalaryInfo) {
+  if (!lastSalaryInfo || !lastSalaryInfo.dailyWage) {
+    return `Licencia No Gozada:\n` +
+      `- Fórmula: Días Restantes × Jornal Diario\n` +
+      `- Días Restantes: ${summary.daysRemaining || 0}\n` +
+      `- Jornal Diario: Último salario registrado del año actual\n` +
+      `- Solo se calcula al egreso del empleado`;
+  }
+  
+  return `Licencia No Gozada:\n` +
+    `- Fórmula: Días Restantes × Jornal Diario\n` +
+    `- Días Restantes: ${summary.daysRemaining || 0}\n` +
+    `- Jornal Diario: $${formatNumber(lastSalaryInfo.dailyWage)}\n` +
+    `- Último salario: ${getMonthName(lastSalaryInfo.month)} ${lastSalaryInfo.year}\n` +
+    `- Cálculo: ${summary.daysRemaining || 0} × $${formatNumber(lastSalaryInfo.dailyWage)} = $${formatNumber((summary.daysRemaining || 0) * lastSalaryInfo.dailyWage)}\n` +
+    `- Solo se calcula al egreso del empleado`;
+}
+
+function getAguinaldoFormula(summary, semester, displayYear, currentYear, semesterSalaries) {
+  const semesterLabel = semester === 'first' 
+    ? `1er Semestre (Dic ${displayYear} - May ${currentYear})`
+    : `2do Semestre (Jun ${currentYear} - Nov ${currentYear})`;
+  
+  const amount = semester === 'first' 
+    ? summary.firstSemesterAguinaldo || 0
+    : summary.secondSemesterAguinaldo || 0;
+  
+  if (!semesterSalaries || semesterSalaries.length === 0) {
+    return `Aguinaldo ${semesterLabel}:\n` +
+      `- Fórmula: Total Haberes Gravados del Semestre / 12\n` +
+      `- No hay salarios registrados para este semestre`;
+  }
+  
+  const totalHaberes = semesterSalaries.reduce((sum, s) => {
+    const base = parseFloat(s.baseSalary30Days) || 0;
+    const extras = parseFloat(s.extras) || 0;
+    return sum + (base + extras);
+  }, 0);
+  
+  return `Aguinaldo ${semesterLabel}:\n` +
+    `- Fórmula: Total Haberes Gravados del Semestre / 12\n` +
+    `- Total Haberes: $${formatNumber(totalHaberes)}\n` +
+    `- Meses en semestre: ${semesterSalaries.length}\n` +
+    `- Cálculo: $${formatNumber(totalHaberes)} / 12 = $${formatNumber(amount)}`;
 }
 
 function setupDecimalInput(inputId) {
@@ -222,8 +300,11 @@ async function loadAllData() {
 // Calculate employee payroll summary
 // When viewing year X, show data from year X-1
 // Example: viewing 2026 shows 2025 data
-function calculateEmployeeSummary(employeeId) {
-  const displayYear = currentYear - 1; // Show data from previous year
+function calculateEmployeeSummary(employeeId, viewingYear = null) {
+  // If viewingYear is provided, use it; otherwise default to currentYear - 1
+  // This allows the function to be called with a specific year when viewing employee details
+  const displayYear = viewingYear !== null ? viewingYear - 1 : currentYear - 1;
+  const recordsYearForCalculation = viewingYear !== null ? viewingYear : currentYear;
   
   const yearSalaries = Object.values(salariesData).filter(s => 
     s.employeeId === employeeId && s.year === displayYear
@@ -235,8 +316,15 @@ function calculateEmployeeSummary(employeeId) {
   );
   
   // Get vacation record for this year (may contain vacation salary or license not taken)
+  // Note: We get it for displayYear but won't use its amount for active employees
   const vacation = Object.values(vacationsData).find(v => 
     v.employeeId === employeeId && v.year === displayYear
+  );
+  
+  // Also check if there's a vacation record for recordsYearForCalculation (current year)
+  // This might have more up-to-date information
+  const vacationCurrentYear = Object.values(vacationsData).find(v => 
+    v.employeeId === employeeId && v.year === recordsYearForCalculation
   );
   
   // Get employee to check if they have endDate (egreso)
@@ -256,27 +344,63 @@ function calculateEmployeeSummary(employeeId) {
     s.employeeId === employeeId
   );
   
-  // 1er semestre: December of display year + January to May of current year
+  // 1er semestre: December of display year + January to May of recordsYearForCalculation
   const displayYearDecSalaries = allEmployeeSalaries.filter(s => 
     s.year === displayYear && s.month === 12
   );
-  const currentYearSalaries = Object.values(salariesData).filter(s => 
-    s.employeeId === employeeId && s.year === currentYear
+  const recordsYearSalaries = Object.values(salariesData).filter(s => 
+    s.employeeId === employeeId && s.year === recordsYearForCalculation
   );
-  const firstSemesterCurrentYear = currentYearSalaries.filter(s => 
+  const firstSemesterRecordsYear = recordsYearSalaries.filter(s => 
     s.month >= 1 && s.month <= 5
   );
-  const firstSemesterSalaries = [...displayYearDecSalaries, ...firstSemesterCurrentYear];
+  const firstSemesterSalaries = [...displayYearDecSalaries, ...firstSemesterRecordsYear];
   
-  // 2do semestre: June to November of current year
-  const secondSemesterSalaries = currentYearSalaries.filter(s => 
+  // 2do semestre: June to November of recordsYearForCalculation
+  const secondSemesterSalaries = recordsYearSalaries.filter(s => 
     s.month >= 6 && s.month <= 11
   );
   
+  // Get aguinaldo records for this employee to check if they're already paid
+  const allEmployeeAguinaldos = Object.values(aguinaldoData).filter(a => 
+    a && a.employeeId === employeeId
+  );
+  
+  // Check if first semester aguinaldo is already paid
+  // First semester: December (displayYear) to May (recordsYearForCalculation)
+  // The aguinaldo is paid in June of recordsYearForCalculation, so the record year should be recordsYearForCalculation
+  const firstSemesterPaid = allEmployeeAguinaldos.some(a => {
+    if (!a.paidDate) return false;
+    // Check if notes indicate first semester
+    const aguinaldoYear = a.year || (new Date(a.paidDate)).getFullYear();
+    // First semester aguinaldo is paid in June, so year should be recordsYearForCalculation
+    if (aguinaldoYear === recordsYearForCalculation && a.notes && 
+        (a.notes.includes('1er semestre') || a.notes.includes('primer semestre'))) {
+      return true;
+    }
+    return false;
+  });
+  
+  // Check if second semester aguinaldo is already paid
+  // Second semester: June to November (recordsYearForCalculation)
+  // The aguinaldo is paid in December of recordsYearForCalculation, so the record year should be recordsYearForCalculation
+  const secondSemesterPaid = allEmployeeAguinaldos.some(a => {
+    if (!a.paidDate) return false;
+    // Check if notes indicate second semester
+    const aguinaldoYear = a.year || (new Date(a.paidDate)).getFullYear();
+    // Second semester aguinaldo is paid in December, so year should be recordsYearForCalculation
+    if (aguinaldoYear === recordsYearForCalculation && a.notes && 
+        (a.notes.includes('2do semestre') || a.notes.includes('segundo semestre'))) {
+      return true;
+    }
+    return false;
+  });
+  
   // Calculate aguinaldo for first semester
   // Formula: totalHaberesGravadosDelSemestre / 12
+  // BUT: If already paid, return 0
   let firstSemesterAguinaldo = 0;
-  if (firstSemesterSalaries.length > 0) {
+  if (!firstSemesterPaid && firstSemesterSalaries.length > 0) {
     const totalHaberesGravados = firstSemesterSalaries.reduce((sum, salary) => {
       const base = parseFloat(salary.baseSalary30Days) || 0;
       const extras = parseFloat(salary.extras) || 0;
@@ -287,8 +411,9 @@ function calculateEmployeeSummary(employeeId) {
   
   // Calculate aguinaldo for second semester
   // Formula: totalHaberesGravadosDelSemestre / 12
+  // BUT: If already paid, return 0
   let secondSemesterAguinaldo = 0;
-  if (secondSemesterSalaries.length > 0) {
+  if (!secondSemesterPaid && secondSemesterSalaries.length > 0) {
     const totalHaberesGravados = secondSemesterSalaries.reduce((sum, salary) => {
       const base = parseFloat(salary.baseSalary30Days) || 0;
       const extras = parseFloat(salary.extras) || 0;
@@ -303,12 +428,61 @@ function calculateEmployeeSummary(employeeId) {
       // Calculate accumulated vacation days based on employee start date
       // Legal rule: La licencia se genera DESPUÉS de trabajar un año completo
       // When viewing year X, calculate for year X-1 (displayYear)
-      // Example: viewing 2025, calculate for 2024 (based on years worked until Dec 31, 2023)
+      // This is used for "Salario Vacacional" calculation (always uses normal calculation)
       let daysAccumulated = 0;
+      
+      // Separate calculation for "Licencia No Gozada" when employee has endDate in same year
+      // This is ONLY used for license not taken calculation
+      let daysAccumulatedForLicenseNotTaken = null;
+      
       try {
         // employee already declared above (line 216)
         if (employee && employee.startDate) {
           const start = new Date(employee.startDate);
+          
+          // Check if employee has endDate in the same year being viewed
+          // If so, calculate days accumulated ONLY for "Licencia No Gozada"
+          if (hasEndDate && employee.endDate) {
+            const endDate = new Date(employee.endDate);
+            const endDateYear = endDate.getFullYear();
+            
+            // If endDate is in the same year as recordsYearForCalculation, calculate for that year
+            if (endDateYear === recordsYearForCalculation) {
+              const recordsYearStart = new Date(recordsYearForCalculation, 0, 1); // January 1
+              const recordsYearEnd = new Date(recordsYearForCalculation, 11, 31); // December 31
+              
+              // Calculate months worked from start to end date (both in recordsYearForCalculation)
+              const actualStart = start > recordsYearStart ? start : recordsYearStart;
+              const actualEnd = endDate < recordsYearEnd ? endDate : recordsYearEnd;
+              
+              // Only calculate if start is before or equal to end
+              if (actualStart <= actualEnd) {
+                let monthsDiff = (actualEnd.getFullYear() - actualStart.getFullYear()) * 12;
+                monthsDiff += actualEnd.getMonth() - actualStart.getMonth();
+                monthsDiff++; // Include both start and end months
+                
+                const monthsWorkedInRecordsYear = Math.max(0, monthsDiff);
+                
+                // Calculate days accumulated proportionally: 1.66 days per month
+                // This is ONLY for "Licencia No Gozada" calculation
+                daysAccumulatedForLicenseNotTaken = Math.floor(monthsWorkedInRecordsYear * 1.66);
+                
+                console.log('Employee with endDate in recordsYear - calculate for license not taken', {
+                  employeeId,
+                  recordsYearForCalculation,
+                  startDate: employee.startDate,
+                  endDate: employee.endDate,
+                  monthsWorkedInRecordsYear,
+                  daysAccumulatedForLicenseNotTaken
+                });
+              } else {
+                daysAccumulatedForLicenseNotTaken = 0;
+              }
+            }
+          }
+          
+          // Normal calculation logic (always used for "Salario Vacacional")
+          // This runs regardless of whether we calculated daysAccumulatedForLicenseNotTaken
           // displayYear is already calculated at function start: currentYear - 1
           // For displayYear 2024, calculate years worked until Dec 31, 2023
           const calculationYear = displayYear - 1; // Years worked until end of calculationYear
@@ -485,8 +659,8 @@ function calculateEmployeeSummary(employeeId) {
               monthsWorkedInYear
             });
           }
-    } else {
-      // Fallback to old calculation if no start date
+        } else {
+          // Fallback to old calculation if no start date
       // Legal: Use proportional calculation: 1.66 days per month, use Math.floor()
       // Use months worked in displayYear
       const displayYearSalaries = Object.values(salariesData).filter(s => 
@@ -530,46 +704,148 @@ function calculateEmployeeSummary(employeeId) {
   // Para el cálculo del saldo, descontar días gozados del displayYear
   const daysTakenDisplayYear = yearLicenses.reduce((sum, license) => sum + (license.daysTaken || 0), 0);
   
-  // Also get days taken from currentYear for display purposes
-  const currentYearLicenses = Object.values(licensesData).filter(l => 
-    l.employeeId === employeeId && l.year === currentYear
+  // Also get days taken from recordsYearForCalculation for display purposes
+  const recordsYearLicenses = Object.values(licensesData).filter(l => 
+    l.employeeId === employeeId && l.year === recordsYearForCalculation
   );
-  const daysTakenCurrentYear = currentYearLicenses.reduce((sum, license) => sum + (license.daysTaken || 0), 0);
+  const daysTakenRecordsYear = recordsYearLicenses.reduce((sum, license) => sum + (license.daysTaken || 0), 0);
   
-  // Calculate unused vacation days (saldo)
-  // Subtract days taken from both displayYear and currentYear to get the actual balance
-  // The balance should reflect days accumulated minus all days taken (from both years)
-  const daysRemaining = Math.max(0, daysAccumulated - daysTakenDisplayYear - daysTakenCurrentYear);
-  
-  // Get salaries for currentYear to calculate jornal for vacation salary
-  // These are calculated based on current year salaries, not displayYear
-  const currentYearSalariesForCalculation = allEmployeeSalaries
-    .filter(s => s.year === currentYear)
-    .sort((a, b) => (b.month || 0) - (a.month || 0));
-  
-  // Calculate average daily wage from currentYear salaries (including extras)
-  // This matches the calculation method for license not taken
-  let averageDailyWageCurrentYear = 0;
-  if (currentYearSalariesForCalculation.length > 0) {
-    const totalHaberesCurrentYear = currentYearSalariesForCalculation.reduce((sum, s) => {
-      const base = parseFloat(s.baseSalary30Days) || 0;
-      const extras = parseFloat(s.extras) || 0;
-      return sum + (base + extras);
-    }, 0);
-    const avgMonthlyCurrentYear = totalHaberesCurrentYear / currentYearSalariesForCalculation.length;
-    averageDailyWageCurrentYear = avgMonthlyCurrentYear / 30;
+  // For vacation salary calculation, we need days accumulated for the CURRENT YEAR (recordsYearForCalculation)
+  // not displayYear, because vacation salary is calculated based on remaining days of the current year
+  // Calculate days accumulated for recordsYearForCalculation (current year)
+  let daysAccumulatedCurrentYear = 0;
+  try {
+    if (employee && employee.startDate) {
+      const start = new Date(employee.startDate);
+      const currentYearStart = new Date(recordsYearForCalculation, 0, 1); // January 1 of current year
+      const currentYearEnd = new Date(recordsYearForCalculation, 11, 31); // December 31 of current year
+      
+      // Calculate months worked in current year
+      let monthsWorkedCurrentYear = 0;
+      if (start <= currentYearEnd) {
+        const actualStart = start > currentYearStart ? start : currentYearStart;
+        const actualEnd = currentYearEnd;
+        
+        if (start < currentYearStart) {
+          monthsWorkedCurrentYear = 12;
+        } else {
+          let monthsDiff = (actualEnd.getFullYear() - actualStart.getFullYear()) * 12;
+          monthsDiff += actualEnd.getMonth() - actualStart.getMonth();
+          monthsDiff++;
+          monthsWorkedCurrentYear = Math.max(0, monthsDiff);
+        }
+      }
+      
+      // Check if employee worked full year in current year
+      const workedFullCurrentYear = start < currentYearStart || monthsWorkedCurrentYear >= 12;
+      
+      if (workedFullCurrentYear) {
+        // Calculate years worked up to end of current year
+        const currentYearEndDate = new Date(recordsYearForCalculation, 11, 31);
+        let yearsWorkedForCurrentYear = currentYearEndDate.getFullYear() - start.getFullYear();
+        const monthDiff = currentYearEndDate.getMonth() - start.getMonth();
+        const dayDiff = currentYearEndDate.getDate() - start.getDate();
+        
+        if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+          yearsWorkedForCurrentYear--;
+        }
+        
+        yearsWorkedForCurrentYear = Math.max(1, yearsWorkedForCurrentYear);
+        daysAccumulatedCurrentYear = 20 + Math.floor((yearsWorkedForCurrentYear - 1) / 4);
+      } else if (monthsWorkedCurrentYear > 0) {
+        daysAccumulatedCurrentYear = Math.floor(monthsWorkedCurrentYear * 1.66);
+      }
+    } else {
+      // Fallback: use salaries from current year
+      const currentYearSalaries = Object.values(salariesData).filter(s => 
+        s.employeeId === employeeId && s.year === recordsYearForCalculation
+      );
+      daysAccumulatedCurrentYear = Math.floor(currentYearSalaries.length * 1.66);
+    }
+  } catch (error) {
+    // Fallback: use salaries from current year
+    const currentYearSalaries = Object.values(salariesData).filter(s => 
+      s.employeeId === employeeId && s.year === recordsYearForCalculation
+    );
+    daysAccumulatedCurrentYear = Math.floor(currentYearSalaries.length * 1.66);
   }
   
-  // Also try to get direct dailyWage from last salary (fallback)
-  const lastSalaryWithJornal = currentYearSalariesForCalculation.find(s => s.dailyWage && s.dailyWage > 0);
-  const lastJornal = lastSalaryWithJornal ? parseFloat(lastSalaryWithJornal.dailyWage) : 0;
+  // Calculate daily wage for vacation salary and license not taken
+  // Use the last salary record from currentYear (recordsYearForCalculation) to get daily wage
+  // This ensures both calculations use the same base (last salary of the year)
+  let dailyWageForVacationSalary = 0;
   
-  // Use average daily wage (with extras) if available, otherwise use direct jornal
-  const dailyWageForVacationSalary = averageDailyWageCurrentYear > 0 ? averageDailyWageCurrentYear : lastJornal;
+  // Get salaries from currentYear (recordsYearForCalculation) for daily wage calculation
+  // Use the last salary record (most recent month) to get daily wage
+  const recordsYearSalariesForWage = allEmployeeSalaries
+    .filter(s => s.year === recordsYearForCalculation && s.month)
+    .sort((a, b) => {
+      // Sort by month descending to get the last salary (most recent month)
+      // If months are equal, prefer the one with dailyWage if available
+      if ((b.month || 0) !== (a.month || 0)) {
+        return (b.month || 0) - (a.month || 0);
+      }
+      // If same month, prefer one with dailyWage
+      if (b.dailyWage && !a.dailyWage) return -1;
+      if (a.dailyWage && !b.dailyWage) return 1;
+      return 0;
+    });
+  
+  if (recordsYearSalariesForWage.length > 0) {
+    // Get the last salary (most recent month)
+    const lastSalary = recordsYearSalariesForWage[0];
+    
+    // Try to get dailyWage directly from the salary record first
+    if (lastSalary.dailyWage && lastSalary.dailyWage > 0) {
+      dailyWageForVacationSalary = parseFloat(lastSalary.dailyWage);
+    } else {
+      // Calculate daily wage from baseSalary30Days + extras
+      const base = parseFloat(lastSalary.baseSalary30Days) || 0;
+      const extras = parseFloat(lastSalary.extras) || 0;
+      const totalMonthly = base + extras;
+      dailyWageForVacationSalary = totalMonthly / 30;
+    }
+    
+    // Debug log to verify calculation
+    if (typeof logger !== 'undefined' && logger.debug) {
+      logger.debug('Daily wage calculation', {
+        employeeId,
+        recordsYearForCalculation,
+        lastSalaryMonth: lastSalary.month,
+        lastSalaryYear: lastSalary.year,
+        dailyWage: lastSalary.dailyWage,
+        baseSalary30Days: lastSalary.baseSalary30Days,
+        extras: lastSalary.extras,
+        calculatedDailyWage: dailyWageForVacationSalary,
+        totalSalariesInYear: recordsYearSalariesForWage.length
+      });
+    }
+  } else {
+    // Debug log if no salaries found
+    if (typeof logger !== 'undefined' && logger.debug) {
+      logger.debug('No salaries found for daily wage calculation', {
+        employeeId,
+        recordsYearForCalculation,
+        allEmployeeSalariesCount: allEmployeeSalaries.length
+      });
+    }
+  }
+  
+  // Calculate "Saldo Días de Licencia" (same as displayed in cards)
+  // If employee has endDate in the same year being viewed, use daysAccumulatedForLicenseNotTaken
+  // Otherwise: días acumulados del displayYear - días tomados del recordsYearForCalculation
+  // This matches what is shown in the "Saldo Días de Licencia" field
+  // Note: This is used for display purposes and for "Licencia No Gozada" calculation
+  const daysAccumulatedForDisplay = daysAccumulatedForLicenseNotTaken !== null 
+    ? daysAccumulatedForLicenseNotTaken 
+    : daysAccumulated;
+  const displayedDaysRemaining = Math.max(0, (daysAccumulatedForDisplay || 0) - (daysTakenRecordsYear || 0));
   
   // Legal: Licencia No Gozada y Salario Vacacional son conceptos diferentes
   // - Licencia No Gozada: Solo se calcula al egreso (usar promedio últimos 12 meses)
+  //   When employee has endDate in same year, use special calculation for months worked
   // - Salario Vacacional: Solo se calcula cuando se goza la licencia
+  //   Always uses normal calculation (displayYear), NOT the special endDate calculation
   
   // hasEndDate already declared above (line 217)
   
@@ -580,29 +856,24 @@ function calculateEmployeeSummary(employeeId) {
   
   // Calculate license not taken (informative for all employees with remaining days)
   // This shows what the license not taken would be if the employee terminates
-  // IMPORTANT: Only calculate if there are salaries in the current year
-  // If no salaries exist for the current year, show $0,00
-  const hasCurrentYearSalaries = allEmployeeSalaries.some(s => s && s.year === currentYear);
-  
-  if (daysRemaining > 0 && hasCurrentYearSalaries) {
-    // Use average of last 12 months salaries (from current year and previous)
-    const sortedSalaries = allEmployeeSalaries
-      .filter(s => s && s.year && s.month)
-      .sort((a, b) => {
-        if (a.year !== b.year) return b.year - a.year;
-        return b.month - a.month;
-      })
-      .slice(0, 12); // Last 12 months
+  // Legal: Solo se calcula al egreso, pero mostramos información si hay días pendientes
+  // When employee has endDate in same year, use displayedDaysRemaining (which uses special calculation)
+  // Otherwise, use normal displayedDaysRemaining
+  if (displayedDaysRemaining > 0 && dailyWageForVacationSalary > 0) {
+    licenseNotTakenSalary = displayedDaysRemaining * dailyWageForVacationSalary;
     
-    if (sortedSalaries.length > 0) {
-      const totalHaberes = sortedSalaries.reduce((sum, salary) => {
-        const base = parseFloat(salary.baseSalary30Days) || 0;
-        const extras = parseFloat(salary.extras) || 0;
-        return sum + (base + extras);
-      }, 0);
-      const avgMonthlySalary = totalHaberes / sortedSalaries.length;
-      const averageDailyWage = avgMonthlySalary / 30;
-      licenseNotTakenSalary = daysRemaining * averageDailyWage;
+    // Debug log to verify calculation
+    if (typeof logger !== 'undefined' && logger.debug) {
+      logger.debug('License not taken calculation', {
+        employeeId,
+        displayedDaysRemaining,
+        daysAccumulatedForDisplay,
+        daysAccumulatedForLicenseNotTaken,
+        daysAccumulated,
+        daysTakenRecordsYear,
+        dailyWageForVacationSalary,
+        calculatedAmount: licenseNotTakenSalary
+      });
     }
   }
   
@@ -616,36 +887,59 @@ function calculateEmployeeSummary(employeeId) {
     }
   }
   
-  // Calculate vacation salary (for active employees)
-  // Both license not taken and vacation salary are based on daysRemaining (saldo de días)
-  if (!hasEndDate) {
-    // Employee is active - calculate vacation salary based on saldo de días
-    if (vacation && !vacation.isLicenseNotTaken && vacation.year === displayYear) {
-      // Use amount from vacation record if available for displayYear
-      vacationSalary = parseFloat(vacation.amount) || 0;
-    } else if (daysRemaining > 0 && dailyWageForVacationSalary > 0) {
-      // Calculate vacation salary based on saldo de días (remaining days)
-      // Use average daily wage (including extras) to match license not taken calculation
-      // This shows what the vacation salary would be based on the remaining days
-      vacationSalary = daysRemaining * dailyWageForVacationSalary;
-    }
-  }
+  // Calculate vacation salary (for all employees with remaining days)
+  // Show the amount that needs to be paid based on remaining days (saldo de días)
+  // This represents the vacation salary that will be paid when the employee takes their remaining vacation days
+  // IMPORTANT: Vacation salary ALWAYS uses normal calculation (displayYear), NOT the special endDate calculation
+  // This is different from "Licencia No Gozada" which uses special calculation when endDate is in same year
+  const vacationDaysRemaining = Math.max(0, (daysAccumulated || 0) - (daysTakenRecordsYear || 0));
+  const allDaysTaken = vacationDaysRemaining <= 0;
   
-  // TODO: Implementar cálculo de licencia no gozada solo en egreso
-  // TODO: Implementar cálculo de salario vacacional solo cuando se goza licencia
+  if (!allDaysTaken && vacationDaysRemaining > 0) {
+    // Employee has remaining days - calculate vacation salary for pending days
+    // Always calculate based on normal daysAccumulated (displayYear), NOT the special endDate calculation
+    // Don't use vacation record amount as it might be outdated
+    if (dailyWageForVacationSalary > 0) {
+      // Calculate vacation salary based on vacationDaysRemaining (normal calculation)
+      // Uses daily wage from last salary of currentYear for consistency
+      // This shows the estimated amount that will be paid when employee takes their remaining vacation
+      vacationSalary = vacationDaysRemaining * dailyWageForVacationSalary;
+      
+      // Debug log to verify calculation
+      if (typeof logger !== 'undefined' && logger.debug) {
+        logger.debug('Vacation salary calculation', {
+          employeeId,
+          vacationDaysRemaining,
+          displayedDaysRemaining,
+          daysAccumulated,
+          daysAccumulatedForLicenseNotTaken,
+          daysTakenRecordsYear,
+          dailyWageForVacationSalary,
+          calculatedAmount: vacationSalary,
+          displayYear,
+          recordsYearForCalculation,
+          hasEndDate
+        });
+      }
+    }
+  } else {
+    // All vacation days have been taken - vacation salary should already be paid
+    // Set to 0 to indicate it's already been paid
+    vacationSalary = 0;
+  }
   
   // Calculate total extras
   const totalExtras = yearSalaries.reduce((sum, salary) => sum + (salary.extras || 0), 0);
   
   return {
-    daysAccumulated, // Keep as number for calculations
-    daysTaken: daysTakenDisplayYear, // Days taken only from displayYear (legal: imputa al año que se genera)
-    daysTakenCurrentYear, // Days taken from currentYear for display
-    daysRemaining, // Keep as number for calculations
-    vacationSalary: Math.round(vacationSalary * 100) / 100, // Round to 2 decimals
-    licenseNotTakenSalary: Math.round(licenseNotTakenSalary * 100) / 100, // Round to 2 decimals
-    firstSemesterAguinaldo: Math.round(firstSemesterAguinaldo * 100) / 100,
-    secondSemesterAguinaldo: Math.round(secondSemesterAguinaldo * 100) / 100,
+    daysAccumulated: Math.round(daysAccumulated), // Round to integer
+    daysTaken: Math.round(daysTakenDisplayYear), // Days taken only from displayYear (legal: imputa al año que se genera), rounded to integer
+    daysTakenCurrentYear: Math.round(daysTakenRecordsYear), // Days taken from recordsYearForCalculation for display, rounded to integer
+    daysRemaining: Math.round(displayedDaysRemaining), // Round to integer - same as "Saldo Días de Licencia"
+    vacationSalary: Math.round(vacationSalary), // Round to integer
+    licenseNotTakenSalary: Math.round(licenseNotTakenSalary), // Round to integer
+    firstSemesterAguinaldo: Math.round(firstSemesterAguinaldo),
+    secondSemesterAguinaldo: Math.round(secondSemesterAguinaldo),
     totalExtras,
     monthsWorked,
     salaries: yearSalaries,
@@ -729,30 +1023,105 @@ async function loadPayrollItems() {
       return;
     }
 
-    // Add header
+    // Load roles to filter out employees with "socio" role (needed for filter dropdown)
+    let rolesData = {};
+    try {
+      if (nrd.roles) {
+        const roles = await nrd.roles.getAll();
+        if (Array.isArray(roles)) {
+          roles.forEach(role => {
+            if (role && role.id) rolesData[role.id] = role;
+          });
+        } else if (roles) {
+          rolesData = roles;
+        }
+      }
+    } catch (error) {
+      console.warn('Error loading roles for filtering', error);
+    }
+    
+    // Find "socio" role ID (case-insensitive)
+    const socioRoleId = Object.values(rolesData).find(role => 
+      role && role.name && role.name.toLowerCase().trim() === 'socio'
+    )?.id;
+    
+    // Filter employees: only show those who were active (vigente) in the selected year
+    // and exclude employees with "socio" role
+    const activeEmployeesForFilter = employees.filter(employee => {
+      // Check if employee is active in the year
+      if (!isEmployeeActiveInYear(employee, currentYear)) {
+        return false;
+      }
+      
+      // Exclude if employee has "socio" role
+      if (socioRoleId) {
+        const roleIds = employee.roleIds || (employee.roleId ? [employee.roleId] : []);
+        if (roleIds.includes(socioRoleId)) {
+          return false;
+        }
+      }
+      
+      return true;
+    });
+    
+    // Sort employees by name
+    activeEmployeesForFilter.sort((a, b) => {
+      const nameA = (a.name || '').toLowerCase();
+      const nameB = (b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+    
+    // Add header with year selector and employee filter
     const header = document.createElement('div');
-    header.className = 'flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-4';
+    header.className = 'flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 sm:gap-0 mb-6';
     header.innerHTML = `
-      <div class="flex flex-wrap gap-2 w-full sm:w-auto">
+      <div>
+        <h2 class="text-xl sm:text-2xl font-light text-gray-800 mb-1">Partidas Salariales</h2>
+        <p class="text-sm text-gray-600">Resumen de partidas salariales por empleado</p>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <select id="employee-filter-select" class="px-3 py-1.5 border border-gray-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-red-600 focus:border-red-600 bg-white ${!filteredEmployeeId ? 'text-gray-500' : 'text-gray-700'}" style="min-height: 2rem;">
+          <option value="" ${!filteredEmployeeId ? 'selected' : ''}>Filtrar por empleado</option>
+          ${activeEmployeesForFilter.map(emp => `
+            <option value="${emp.id}" ${filteredEmployeeId === emp.id ? 'selected' : ''}>${escapeHtml(emp.name)}</option>
+          `).join('')}
+        </select>
         ${(() => {
           const today = new Date();
           const currentYearValue = today.getFullYear();
           const startYear = Math.max(2021, currentYearValue - 5);
           const years = [];
-          for (let year = startYear; year <= currentYearValue; year++) {
+          // First add current year
+          years.push(currentYearValue);
+          // Then add other years in descending order
+          for (let year = currentYearValue - 1; year >= startYear; year--) {
             years.push(year);
           }
-          return years.map(year => 
-            `<button class="year-btn px-3 py-1.5 text-sm border rounded transition-colors ${
-              year === currentYear 
-                ? 'bg-red-600 text-white border-red-600 font-medium' 
-                : 'bg-white text-gray-700 border-gray-300 hover:border-red-600 hover:text-red-600'
-            }" data-year="${year}">${year}</button>`
-          ).join('');
+          return years.map(year => {
+            const isCurrentYearValue = year === currentYearValue;
+            const isSelectedYear = year === currentYear;
+            
+            // Year current has different border color, selected year has red background
+            const borderClass = isCurrentYearValue ? 'border-red-500' : 'border-gray-300';
+            const bgClass = isSelectedYear 
+              ? 'bg-red-600 text-white border-red-600 font-medium' 
+              : 'bg-white text-gray-700 ' + borderClass + ' hover:border-red-600 hover:text-red-600';
+            
+            return `<button class="year-btn px-3 py-1.5 border rounded transition-colors text-sm ${bgClass}" data-year="${year}">${year}</button>`;
+          }).join('');
         })()}
       </div>
     `;
     payrollContent.appendChild(header);
+    
+    // Add event listener for employee filter
+    const employeeFilterSelect = document.getElementById('employee-filter-select');
+    if (employeeFilterSelect) {
+      employeeFilterSelect.addEventListener('change', async (e) => {
+        filteredEmployeeId = e.target.value || null;
+        await loadPayrollItems();
+      });
+    }
 
     // Year selector handlers - remove old listeners first to prevent duplicates
     const oldButtons = payrollContent.querySelectorAll('.year-btn');
@@ -798,13 +1167,19 @@ async function loadPayrollItems() {
     cardsContainer.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
     
     // Filter employees: only show those who were active (vigente) in the selected year
-    const activeEmployees = employees.filter(employee => 
-      isEmployeeActiveInYear(employee, currentYear)
-    );
+    // and exclude employees with "socio" role
+    // Also apply employee filter if selected
+    const activeEmployees = activeEmployeesForFilter.filter(employee => {
+      // Apply employee filter if one is selected
+      if (filteredEmployeeId && employee.id !== filteredEmployeeId) {
+        return false;
+      }
+      return true;
+    });
     
     if (activeEmployees.length === 0) {
       cardsContainer.innerHTML = `
-        <div class="col-span-full text-center py-12 border border-gray-200 rounded-lg p-8">
+        <div class="col-span-full text-center py-12 border border-gray-200 p-8">
           <p class="text-gray-600 mb-2">No hay empleados vigentes en ${currentYear}</p>
           <p class="text-xs text-gray-500">Los empleados deben haber estado activos durante el año seleccionado</p>
         </div>
@@ -814,45 +1189,170 @@ async function loadPayrollItems() {
     }
     
     activeEmployees.forEach(employee => {
-      const summary = calculateEmployeeSummary(employee.id);
+      // Use the same year as in showEmployeeDetails to ensure consistency
+      const recordsYear = currentYear;
+      const displayYear = currentYear - 1;
+      const summary = calculateEmployeeSummary(employee.id, recordsYear);
       const totalSummary = calculateEmployeeTotalSummary(employee.id);
       
+      // Get last salary info for tooltips
+      const allEmployeeSalaries = Object.values(salariesData).filter(s => 
+        s.employeeId === employee.id && s.year === recordsYear && s.month
+      );
+      const lastSalary = allEmployeeSalaries
+        .sort((a, b) => (b.month || 0) - (a.month || 0))[0];
+      
+      const lastSalaryInfo = lastSalary ? {
+        month: lastSalary.month,
+        year: lastSalary.year,
+        dailyWage: lastSalary.dailyWage || (lastSalary.baseSalary30Days && lastSalary.extras 
+          ? (parseFloat(lastSalary.baseSalary30Days) + parseFloat(lastSalary.extras || 0)) / 30
+          : lastSalary.baseSalary30Days ? parseFloat(lastSalary.baseSalary30Days) / 30 : 0)
+      } : null;
+      
+      // Get semester salaries for aguinaldo formulas
+      const displayYearDecSalaries = allEmployeeSalaries.filter(s => 
+        s.year === displayYear && s.month === 12
+      );
+      const recordsYearSalaries = allEmployeeSalaries.filter(s => s.year === recordsYear);
+      const firstSemesterSalaries = [
+        ...displayYearDecSalaries,
+        ...recordsYearSalaries.filter(s => s.month >= 1 && s.month <= 5)
+      ];
+      const secondSemesterSalaries = recordsYearSalaries.filter(s => 
+        s.month >= 6 && s.month <= 11
+      );
+      
+      // Generate formulas for tooltips
+      const daysAccumulatedFormula = getDaysAccumulatedFormula(summary, recordsYear);
+      const daysRemainingFormula = getDaysRemainingFormula(summary, recordsYear);
+      const vacationSalaryFormula = getVacationSalaryFormula(summary, lastSalaryInfo);
+      const licenseNotTakenFormula = getLicenseNotTakenFormula(summary, lastSalaryInfo);
+      const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemesterSalaries);
+      const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemesterSalaries);
+      
+      // Check if employee has pending days (días pendientes por tomar)
+      // Use the SAME calculation that is displayed in the card to ensure consistency
+      // The card shows: (daysAccumulated || 0) - (daysTakenCurrentYear || 0)
+      // So we must use the same formula here, not summary.daysRemaining which uses a different calculation
+      const displayedDaysRemaining = Math.round(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)));
+      const hasPendingDays = displayedDaysRemaining > 0;
+      
+      // Check if vacation salary exists and is not paid
+      // Only consider pending if vacationSalary is greater than 0
+      // Use Math.round to avoid floating point comparison issues
+      const vacationSalary = Math.round(Math.max(0, summary.vacationSalary || 0));
+      const hasVacationSalary = vacationSalary > 0;
+      let hasUnpaidVacationSalary = false;
+      if (hasVacationSalary) {
+        // Look for vacation records for the displayYear (the year being shown in the summary)
+        const employeeVacations = Object.values(vacationsData).filter(v => 
+          v && v.employeeId === employee.id && v.year === displayYear && !v.isLicenseNotTaken
+        );
+        const vacationSalaryPaid = employeeVacations.some(v => v.paidDate);
+        hasUnpaidVacationSalary = !vacationSalaryPaid;
+      }
+      
+      // Check if aguinaldo exists and is not paid (check both semesters)
+      // Only consider pending if aguinaldo amount is greater than 0
+      // Use Math.round to avoid floating point comparison issues
+      const firstSemesterAguinaldo = Math.round(Math.max(0, summary.firstSemesterAguinaldo || 0));
+      const secondSemesterAguinaldo = Math.round(Math.max(0, summary.secondSemesterAguinaldo || 0));
+      const hasFirstSemesterAguinaldo = firstSemesterAguinaldo > 0;
+      const hasSecondSemesterAguinaldo = secondSemesterAguinaldo > 0;
+      let hasUnpaidAguinaldo = false;
+      
+      if (hasFirstSemesterAguinaldo || hasSecondSemesterAguinaldo) {
+        const employeeAguinaldos = Object.values(aguinaldoData).filter(a => 
+          a && a.employeeId === employee.id && a.year === recordsYear
+        );
+        
+        // Check if each semester aguinaldo is paid
+        const firstSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
+          a.notes && (a.notes.includes('1er semestre') || a.notes.includes('primer semestre'))
+        );
+        const secondSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
+          a.notes && (a.notes.includes('2do semestre') || a.notes.includes('segundo semestre'))
+        );
+        
+        const firstSemesterPaid = firstSemesterAguinaldoRecord && firstSemesterAguinaldoRecord.paidDate;
+        const secondSemesterPaid = secondSemesterAguinaldoRecord && secondSemesterAguinaldoRecord.paidDate;
+        
+        const hasUnpaidFirstSemester = hasFirstSemesterAguinaldo && !firstSemesterPaid;
+        const hasUnpaidSecondSemester = hasSecondSemesterAguinaldo && !secondSemesterPaid;
+        hasUnpaidAguinaldo = hasUnpaidFirstSemester || hasUnpaidSecondSemester;
+      }
+      
+      // Employee has pending ONLY if they have actual pending items (days > 0 or amounts > 0)
+      // All values must be checked to ensure we're not showing "Pendiente" when everything is 0
+      // Double-check: if all displayed values are 0, hasPending should be false
+      const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
+      
+      // Add special styling if has pending items
+      const cardClass = hasPending 
+        ? 'border-4 border-orange-500 p-4 bg-white cursor-pointer hover:border-orange-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 relative' 
+        : 'border-2 border-gray-200 p-4 bg-white cursor-pointer hover:border-red-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200';
+      
       const card = document.createElement('div');
-      card.className = 'border border-gray-200 rounded-lg p-3 cursor-pointer hover:border-red-600 hover:shadow-md transition-all';
+      card.className = cardClass;
       card.dataset.employeeId = employee.id;
       
-      const displayYear = summary.displayYear || (currentYear - 1);
+      // displayYear is already declared above (line 1084)
       
       card.innerHTML = `
-        <div class="mb-2 -m-3 px-3 py-2 mb-2 bg-red-600 text-white rounded-t-lg">
-          <h3 class="text-base font-medium">${escapeHtml(employee.name)}</h3>
-          <p class="text-xs text-red-100">${currentYear}</p>
+        ${hasPending ? `
+          <div class="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow-md z-10">
+            Pendiente
+          </div>
+        ` : ''}
+        <div class="-m-4 mb-3 px-4 py-3 bg-red-600 text-white shadow-md ${hasPending ? 'bg-orange-600' : ''}">
+          <h3 class="text-lg font-semibold tracking-tight">${escapeHtml(employee.name)}</h3>
+          <p class="text-sm ${hasPending ? 'text-orange-100' : 'text-red-100'} mt-0.5">${currentYear}</p>
         </div>
         
-        <div class="space-y-1.5 text-xs">
-          <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Días Acumulados:</span>
-            <span class="font-medium">${formatNumber(summary.daysAccumulated, 2)}</span>
+        <div class="space-y-2.5 text-sm px-1">
+          <div class="py-2.5 px-2 border-b border-gray-200 hover:bg-green-50 transition-colors rounded">
+            <div class="flex justify-between items-center">
+              <span class="text-gray-700 font-medium">Saldo Días de Licencia:</span>
+              <span class="font-semibold text-green-600 text-base cursor-help text-right" title="${escapeHtml(daysRemainingFormula)}">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)))}</span>
+            </div>
+            <div class="pl-4 mt-1 space-y-1">
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">Días generados ${displayYear}:</span>
+                <span class="font-semibold text-green-600 text-right">${formatNumber(summary.daysAccumulated || 0)}</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">Días gozados:</span>
+                <span class="font-semibold text-green-600 text-right">${formatNumber(summary.daysTakenCurrentYear || 0)}</span>
+              </div>
+            </div>
           </div>
           
-          <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Licencia No Gozada:</span>
-            <span class="font-medium text-green-600">${formatCurrency(summary.licenseNotTakenSalary || 0)}</span>
+          <div class="flex justify-between items-center py-2.5 px-2 border-b border-gray-200 hover:bg-blue-50 transition-colors rounded">
+            <span class="text-gray-700 font-medium">Licencia No Gozada:</span>
+            <span class="font-semibold text-blue-600 text-base cursor-help text-right" title="${escapeHtml(licenseNotTakenFormula)}">${formatCurrency(summary.licenseNotTakenSalary || 0)}</span>
           </div>
           
-          <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Salario Vacacional:</span>
-            <span class="font-medium text-red-600">${formatCurrency(summary.vacationSalary)}</span>
+          <div class="flex justify-between items-center py-2.5 px-2 border-b border-gray-200 hover:bg-red-50 transition-colors rounded">
+            <span class="text-gray-700 font-medium">Salario Vacacional:</span>
+            <span class="font-semibold text-red-600 text-base cursor-help text-right" title="${escapeHtml(vacationSalaryFormula)}">${formatCurrency(summary.vacationSalary)}</span>
           </div>
           
-          <div class="flex justify-between items-center py-1 border-b border-gray-100">
-            <span class="text-gray-600">Aguinaldo 12/${displayYear} - 05/${currentYear}:</span>
-            <span class="font-medium text-red-600">${formatCurrency(summary.firstSemesterAguinaldo || 0)}</span>
-          </div>
-          
-          <div class="flex justify-between items-center py-1">
-            <span class="text-gray-600">Aguinaldo 06/${currentYear} - 11/${currentYear}:</span>
-            <span class="font-medium text-red-600">${formatCurrency(summary.secondSemesterAguinaldo || 0)}</span>
+          <div class="py-2.5 px-2 border-b border-gray-200 hover:bg-yellow-50 transition-colors rounded">
+            <div class="flex justify-between items-center">
+              <span class="text-gray-700 font-medium">Saldo de Aguinaldo:</span>
+              <span class="font-semibold text-yellow-600 text-base text-right">${formatCurrency((summary.firstSemesterAguinaldo || 0) + (summary.secondSemesterAguinaldo || 0))}</span>
+            </div>
+            <div class="pl-4 mt-1 space-y-1">
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">12/${displayYear} - 05/${currentYear}:</span>
+                <span class="font-semibold text-yellow-600 cursor-help" title="${escapeHtml(firstSemesterAguinaldoFormula)}">${formatCurrency(summary.firstSemesterAguinaldo || 0)}</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">06/${currentYear} - 11/${currentYear}:</span>
+                <span class="font-semibold text-yellow-600 cursor-help" title="${escapeHtml(secondSemesterAguinaldoFormula)}">${formatCurrency(summary.secondSemesterAguinaldo || 0)}</span>
+              </div>
+            </div>
           </div>
         </div>
       `;
@@ -878,13 +1378,10 @@ async function loadPayrollItems() {
     payrollContent.appendChild(cardsContainer);
 }
 
-// Show employee details
+// Show employee details as full page
 async function showEmployeeDetails(employeeId, successMessage = null) {
-  // Remove any existing employee details modal first
-  const existingModal = document.getElementById('employee-details-modal');
-  if (existingModal) {
-    existingModal.remove();
-  }
+  const payrollContent = document.getElementById('payroll-items-content');
+  if (!payrollContent) return;
   
   selectedEmployeeId = employeeId;
   await loadAllData();
@@ -927,41 +1424,118 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
     }
   }
   
-  // Calculate summary with fresh data
-  const summary = calculateEmployeeSummary(employeeId);
-  // The displayYear is the year of the data being shown in the cards
-  // When viewing year 2026, cards show data from 2025, so displayYear = 2025
-  const displayYear = currentYear - 1;
   // recordsYear is the year for actual records (salaries and licenses)
   // When viewing year 2026, show records from 2026
   const recordsYear = currentYear;
+  // The displayYear is the year of the data being shown in the cards
+  // When viewing year 2026, cards show data from 2025, so displayYear = 2025
+  const displayYear = currentYear - 1;
   
-  // Create details modal
-  const modal = document.createElement('div');
-  modal.id = 'employee-details-modal';
-  modal.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4';
-  modal.style.overflowY = 'auto';
-  modal.style.scrollbarWidth = 'none'; // Firefox
-  modal.style.msOverflowStyle = 'none'; // IE/Edge
-  modal.innerHTML = `
-    <style>
-      #employee-details-modal::-webkit-scrollbar {
-        display: none;
-        width: 0;
-        height: 0;
-      }
-      #employee-details-modal > div::-webkit-scrollbar {
-        display: none;
-        width: 0;
-        height: 0;
-      }
-    </style>
-    <div class="bg-white rounded-lg max-w-4xl w-full border border-gray-200 shadow-lg max-h-[90vh] overflow-y-auto my-4" 
-      style="scrollbar-width: none; -ms-overflow-style: none; -webkit-overflow-scrolling: touch;">
-      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 bg-red-600">
+  // Calculate summary with fresh data, passing the viewing year (recordsYear)
+  const summary = calculateEmployeeSummary(employeeId, recordsYear);
+  
+  // Get last salary info for tooltips
+  const allEmployeeSalaries = Object.values(salariesData).filter(s => 
+    s.employeeId === employeeId && s.year === recordsYear && s.month
+  );
+  const lastSalary = allEmployeeSalaries
+    .sort((a, b) => (b.month || 0) - (a.month || 0))[0];
+  
+  const lastSalaryInfo = lastSalary ? {
+    month: lastSalary.month,
+    year: lastSalary.year,
+    dailyWage: lastSalary.dailyWage || (lastSalary.baseSalary30Days && lastSalary.extras 
+      ? (parseFloat(lastSalary.baseSalary30Days) + parseFloat(lastSalary.extras || 0)) / 30
+      : lastSalary.baseSalary30Days ? parseFloat(lastSalary.baseSalary30Days) / 30 : 0)
+  } : null;
+  
+  // Get semester salaries for aguinaldo formulas
+  const displayYearDecSalaries = allEmployeeSalaries.filter(s => 
+    s.year === displayYear && s.month === 12
+  );
+  const recordsYearSalaries = allEmployeeSalaries.filter(s => s.year === recordsYear);
+  const firstSemesterSalaries = [
+    ...displayYearDecSalaries,
+    ...recordsYearSalaries.filter(s => s.month >= 1 && s.month <= 5)
+  ];
+  const secondSemesterSalaries = recordsYearSalaries.filter(s => 
+    s.month >= 6 && s.month <= 11
+  );
+  
+  // Generate formulas for tooltips
+  const daysAccumulatedFormula = getDaysAccumulatedFormula(summary, recordsYear);
+  const daysRemainingFormula = getDaysRemainingFormula(summary, recordsYear);
+  const vacationSalaryFormula = getVacationSalaryFormula(summary, lastSalaryInfo);
+  const licenseNotTakenFormula = getLicenseNotTakenFormula(summary, lastSalaryInfo);
+  const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemesterSalaries);
+  const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemesterSalaries);
+  
+  // Calculate hasPending using the same logic as in employee cards
+  const displayedDaysRemaining = Math.round(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)));
+  const hasPendingDays = displayedDaysRemaining > 0;
+  
+  // Check if vacation salary exists and is not paid
+  const vacationSalary = Math.round(Math.max(0, summary.vacationSalary || 0));
+  const hasVacationSalary = vacationSalary > 0;
+  let hasUnpaidVacationSalary = false;
+  if (hasVacationSalary) {
+    const employeeVacations = Object.values(vacationsData).filter(v => 
+      v && v.employeeId === employeeId && v.year === displayYear && !v.isLicenseNotTaken
+    );
+    const vacationSalaryPaid = employeeVacations.some(v => v.paidDate);
+    hasUnpaidVacationSalary = !vacationSalaryPaid;
+  }
+  
+  // Check if aguinaldo exists and is not paid (check both semesters)
+  const firstSemesterAguinaldo = Math.round(Math.max(0, summary.firstSemesterAguinaldo || 0));
+  const secondSemesterAguinaldo = Math.round(Math.max(0, summary.secondSemesterAguinaldo || 0));
+  const hasFirstSemesterAguinaldo = firstSemesterAguinaldo > 0;
+  const hasSecondSemesterAguinaldo = secondSemesterAguinaldo > 0;
+  let hasUnpaidAguinaldo = false;
+  
+  if (hasFirstSemesterAguinaldo || hasSecondSemesterAguinaldo) {
+    const employeeAguinaldos = Object.values(aguinaldoData).filter(a => 
+      a && a.employeeId === employeeId && a.year === recordsYear
+    );
+    
+    // Check if each semester aguinaldo is paid
+    const firstSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
+      a.notes && (a.notes.includes('1er semestre') || a.notes.includes('primer semestre'))
+    );
+    const secondSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
+      a.notes && (a.notes.includes('2do semestre') || a.notes.includes('segundo semestre'))
+    );
+    
+    const firstSemesterPaid = firstSemesterAguinaldoRecord && firstSemesterAguinaldoRecord.paidDate;
+    const secondSemesterPaid = secondSemesterAguinaldoRecord && secondSemesterAguinaldoRecord.paidDate;
+    
+    const hasUnpaidFirstSemester = hasFirstSemesterAguinaldo && !firstSemesterPaid;
+    const hasUnpaidSecondSemester = hasSecondSemesterAguinaldo && !secondSemesterPaid;
+    hasUnpaidAguinaldo = hasUnpaidFirstSemester || hasUnpaidSecondSemester;
+  }
+  
+  // Employee has pending ONLY if they have actual pending items (days > 0 or amounts > 0)
+  const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
+  
+  // Replace content with employee details page
+  payrollContent.innerHTML = `
+    <div class="bg-white border border-gray-200 shadow-sm">
+      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 ${hasPending ? 'bg-orange-600' : 'bg-red-600'} relative">
+        ${hasPending ? `
+          <div class="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow-md z-10">
+            Pendiente
+          </div>
+        ` : ''}
         <div class="flex items-center justify-between">
-          <h3 class="text-lg sm:text-xl font-semibold tracking-tight text-white">${escapeHtml(employee.name)} - ${recordsYear}</h3>
-          <button id="close-employee-details" class="text-white hover:text-gray-200 text-2xl font-light w-8 h-8 flex items-center justify-center hover:bg-white/20 transition-colors">×</button>
+          <div class="flex items-center gap-4">
+            <button id="back-to-employees-btn" class="flex items-center gap-2 px-3 py-1.5 text-sm bg-white/20 hover:bg-white/30 text-white rounded transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+              </svg>
+              Volver
+            </button>
+            <h3 class="text-lg sm:text-xl font-semibold tracking-tight text-white">${escapeHtml(employee.name)} - ${recordsYear}</h3>
+          </div>
         </div>
       </div>
       
@@ -994,36 +1568,49 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       <div class="p-4 sm:p-6 space-y-6">
         <!-- Summary Cards -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-          <div class="bg-gray-50 p-3 rounded border border-gray-200">
-            <div class="text-xs text-gray-600 mb-2 font-medium">Día de Licencia</div>
-            <div class="space-y-1.5">
-              <div class="flex justify-between items-center">
-                <span class="text-xs text-gray-500">Días Acumulados:</span>
-                <span class="text-sm font-medium">${formatNumber(summary.daysAccumulated, 2)}</span>
+          <div class="bg-green-50 p-3 rounded border border-green-200">
+            <div class="flex justify-between items-center mb-1">
+              <div class="text-xs text-gray-600">Saldo Días de Licencia:</div>
+              <div class="text-lg font-medium text-green-600 cursor-help text-right" title="${escapeHtml(daysRemainingFormula)}">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)))}</div>
+            </div>
+            <div class="pl-2 mt-2 space-y-1">
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">Días generados ${displayYear}:</span>
+                <span class="font-medium text-green-600 text-right">${formatNumber(summary.daysAccumulated || 0)}</span>
               </div>
-              <div class="flex justify-between items-center">
-                <span class="text-xs text-gray-500">Días Gozados:</span>
-                <span class="text-sm font-medium">${formatNumber(summary.daysTakenCurrentYear || 0, 2)}</span>
-              </div>
-              <div class="flex justify-between items-center pt-1 border-t border-gray-200">
-                <span class="text-xs text-gray-500">Saldo de Días ${currentYear}:</span>
-                <span class="text-sm font-medium">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)), 2)}</span>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">Días gozados:</span>
+                <span class="font-medium text-green-600 text-right">${formatNumber(summary.daysTakenCurrentYear || 0)}</span>
               </div>
             </div>
           </div>
-          <div class="bg-green-50 p-3 rounded border border-green-200">
-            <div class="text-xs text-gray-600 mb-1">Licencia No Gozada:</div>
-            <div class="text-lg font-medium text-green-600">${formatCurrency(summary.licenseNotTakenSalary || 0)}</div>
+          <div class="bg-blue-50 p-3 rounded border border-blue-200">
+            <div class="flex justify-between items-center">
+              <div class="text-xs text-gray-600">Licencia No Gozada:</div>
+              <div class="text-lg font-medium text-blue-600 cursor-help text-right" title="${escapeHtml(licenseNotTakenFormula)}">${formatCurrency(summary.licenseNotTakenSalary || 0)}</div>
+            </div>
           </div>
           <div class="bg-red-50 p-3 rounded border border-red-200">
-            <div class="text-xs text-gray-600 mb-1">Salario Vacacional:</div>
-            <div class="text-lg font-medium text-red-600">${formatCurrency(summary.vacationSalary)}</div>
+            <div class="flex justify-between items-center">
+              <div class="text-xs text-gray-600">Salario Vacacional:</div>
+              <div class="text-lg font-medium text-red-600 cursor-help text-right" title="${escapeHtml(vacationSalaryFormula)}">${formatCurrency(summary.vacationSalary)}</div>
+            </div>
           </div>
           <div class="bg-yellow-50 p-3 rounded border border-yellow-200">
-            <div class="text-xs text-gray-600 mb-1.5">Aguinaldo 12/${displayYear} - 05/${currentYear}:</div>
-            <div class="text-sm font-medium text-yellow-600 mb-2">${formatCurrency(summary.firstSemesterAguinaldo || 0)}</div>
-            <div class="text-xs text-gray-600 mb-1.5">Aguinaldo 06/${currentYear} - 11/${currentYear}:</div>
-            <div class="text-sm font-medium text-yellow-600">${formatCurrency(summary.secondSemesterAguinaldo || 0)}</div>
+            <div class="flex justify-between items-center mb-2">
+              <div class="text-xs text-gray-600">Saldo de Aguinaldo:</div>
+              <div class="text-lg font-medium text-yellow-600 text-right">${formatCurrency((summary.firstSemesterAguinaldo || 0) + (summary.secondSemesterAguinaldo || 0))}</div>
+            </div>
+            <div class="pl-2 space-y-1">
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">12/${displayYear} - 05/${currentYear}:</span>
+                <span class="font-medium text-yellow-600 cursor-help" title="${escapeHtml(firstSemesterAguinaldoFormula)}">${formatCurrency(summary.firstSemesterAguinaldo || 0)}</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-600">06/${currentYear} - 11/${currentYear}:</span>
+                <span class="font-medium text-yellow-600 cursor-help" title="${escapeHtml(secondSemesterAguinaldoFormula)}">${formatCurrency(summary.secondSemesterAguinaldo || 0)}</span>
+              </div>
+            </div>
           </div>
         </div>
         
@@ -1047,18 +1634,42 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
                 return `<p class="text-sm text-gray-500 text-center py-4">No hay salarios registrados para ${recordsYear}</p>`;
               }
               
-              return yearSalaries.sort((a, b) => (a.month || 0) - (b.month || 0)).map(salary => `
+              return yearSalaries.sort((a, b) => (a.month || 0) - (b.month || 0)).map(salary => {
+                // Calculate values based on type
+                let dailyWage = 0;
+                let monthlySalary = 0;
+                
+                if (salary.type === 'daily') {
+                  // If it's daily, use the registered dailyWage
+                  dailyWage = parseFloat(salary.dailyWage || 0);
+                  // Calculate monthly: dailyWage x 30
+                  monthlySalary = dailyWage * 30;
+                } else {
+                  // If it's monthly, use the registered monthlySalary or calculate from baseSalary30Days
+                  monthlySalary = parseFloat(salary.monthlySalary || salary.baseSalary30Days || 0);
+                  // Calculate daily wage: baseSalary30Days / 30
+                  const base30 = parseFloat(salary.baseSalary30Days || 0);
+                  dailyWage = base30 / 30;
+                }
+                
+                const extras = parseFloat(salary.extras || 0);
+                const totalSalary = monthlySalary + extras;
+                
+                return `
                 <div class="border border-gray-200 rounded p-3 flex justify-between items-center">
                   <div>
                     <div class="text-sm font-medium">${getMonthName(salary.month)} ${salary.year}</div>
                     <div class="text-xs text-gray-600">
-                      ${salary.type === 'daily' ? 
-                        `Jornal: ${formatCurrency(salary.dailyWage || 0)}` : 
-                        `Mensual: ${formatCurrency(salary.monthlySalary || 0)}`}
+                      Jornal diario: ${formatCurrency(dailyWage)}
                     </div>
-                    <div class="text-xs text-gray-500">
-                      Base 30 días: ${formatCurrency(salary.baseSalary30Days || 0)}
-                      ${salary.extras ? ` | Extras: ${formatCurrency(salary.extras)}` : ''}
+                    <div class="text-xs text-gray-600">
+                      Mensual: ${formatCurrency(monthlySalary)}
+                    </div>
+                    <div class="text-xs text-gray-600">
+                      Extras: ${formatCurrency(extras)}
+                    </div>
+                    <div class="text-xs font-medium text-gray-800 mt-0.5">
+                      Salario: ${formatCurrency(totalSalary)}
                     </div>
                   </div>
                   <div class="flex gap-2">
@@ -1072,7 +1683,8 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
                     </button>
                   </div>
                 </div>
-              `).join('');
+              `;
+              }).join('');
             })()}
           </div>
         </div>
@@ -1080,10 +1692,15 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
         <!-- Licenses Section -->
         <div>
           <div class="flex justify-between items-center mb-3">
-            <h4 class="text-base font-light text-gray-800">Días de Licencia Tomados ${recordsYear}</h4>
-            <button id="add-license-btn" class="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors">
-              + Agregar Licencia
-            </button>
+            <h4 class="text-base font-light text-gray-800">Días Tomados o Partidas Pagas</h4>
+            <div class="flex gap-2">
+              <button id="add-license-btn" class="px-3 py-1 text-xs bg-green-600 text-white rounded hover:bg-green-700 transition-colors">
+                + Agregar Licencia
+              </button>
+              <button id="add-aguinaldo-btn" class="px-3 py-1 text-xs bg-yellow-600 text-white rounded hover:bg-yellow-700 transition-colors">
+                + Agregar Aguinaldo
+              </button>
+            </div>
           </div>
           <div id="licenses-list" class="space-y-2">
             ${(() => {
@@ -1093,46 +1710,137 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
               );
               const yearLicenses = allEmployeeLicenses.filter(l => l.year === recordsYear);
               
-              if (yearLicenses.length === 0) {
-                return `<p class="text-sm text-gray-500 text-center py-4">No hay licencias registradas para ${recordsYear}</p>`;
+              // Get all aguinaldos for this employee in recordsYear
+              const allEmployeeAguinaldos = Object.values(aguinaldoData).filter(a => 
+                a && a.employeeId === employeeId && a.year === recordsYear && a.paidDate
+              );
+              
+              // Combine licenses and aguinaldos, sort by date
+              const allItems = [];
+              
+              // Add licenses
+              yearLicenses.forEach(license => {
+                allItems.push({
+                  type: 'license',
+                  id: license.id,
+                  month: license.month || null,
+                  year: license.year,
+                  label: license.month ? `${getMonthName(license.month)} ${license.year}` : `${license.year}`,
+                  details: `Días tomados: ${license.daysTaken || 0}`,
+                  startDate: license.startDate,
+                  endDate: license.endDate
+                });
+              });
+              
+              // Add aguinaldos (only if they have paidDate - meaning they were marked as paid)
+              allEmployeeAguinaldos.forEach(aguinaldo => {
+                // Extract semester from notes
+                let semesterLabel = 'Aguinaldo';
+                if (aguinaldo.notes) {
+                  if (aguinaldo.notes.includes('1er semestre')) {
+                    semesterLabel = '1er Semestre (Dic ' + (recordsYear - 1) + ' - May ' + recordsYear + ')';
+                  } else if (aguinaldo.notes.includes('2do semestre')) {
+                    semesterLabel = '2do Semestre (Jun ' + recordsYear + ' - Nov ' + recordsYear + ')';
+                  }
+                }
+                
+                allItems.push({
+                  type: 'aguinaldo',
+                  id: aguinaldo.id,
+                  month: null,
+                  year: aguinaldo.year,
+                  label: semesterLabel,
+                  details: `Aguinaldo: ${formatCurrency(aguinaldo.amount || 0)}`,
+                  paidDate: aguinaldo.paidDate,
+                  notes: aguinaldo.notes
+                });
+              });
+              
+              // Sort by date (paidDate or month/year)
+              allItems.sort((a, b) => {
+                if (a.paidDate && b.paidDate) {
+                  return b.paidDate - a.paidDate;
+                }
+                if (a.paidDate) return -1;
+                if (b.paidDate) return 1;
+                if (a.year !== b.year) return b.year - a.year;
+                if (a.month && b.month) return b.month - a.month;
+                if (a.month) return -1;
+                if (b.month) return 1;
+                return 0;
+              });
+              
+              if (allItems.length === 0) {
+                return `<p class="text-sm text-gray-500 text-center py-4">No hay partidas registradas para ${recordsYear}</p>`;
               }
               
-              return yearLicenses.map(license => `
-                <div class="border border-gray-200 rounded p-3 flex justify-between items-center">
-                  <div>
-                    <div class="text-sm font-medium">
-                      ${license.month ? `${getMonthName(license.month)} ` : ''}${license.year}
-                    </div>
-                    <div class="text-xs text-gray-600">
-                      Días tomados: ${license.daysTaken || 0}
-                    </div>
-                    ${license.startDate ? `
-                      <div class="text-xs text-gray-500">
-                        ${new Date(license.startDate).toLocaleDateString('es-ES')} - 
-                        ${license.endDate ? new Date(license.endDate).toLocaleDateString('es-ES') : ''}
+              return allItems.map(item => {
+                if (item.type === 'license') {
+                  return `
+                    <div class="border border-gray-200 rounded p-3 flex justify-between items-center">
+                      <div>
+                        <div class="text-sm font-medium">
+                          ${item.label}
+                        </div>
+                        <div class="text-xs text-gray-600">
+                          ${item.details}
+                        </div>
+                        ${item.startDate ? `
+                          <div class="text-xs text-gray-500">
+                            ${new Date(item.startDate).toLocaleDateString('es-ES')} - 
+                            ${item.endDate ? new Date(item.endDate).toLocaleDateString('es-ES') : ''}
+                          </div>
+                        ` : ''}
                       </div>
-                    ` : ''}
-                  </div>
-                  <div class="flex gap-2">
-                    <button class="edit-license-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
-                      data-license-id="${license.id}">
-                      Editar
-                    </button>
-                    <button class="delete-license-btn px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors" 
-                      data-license-id="${license.id}">
-                      Eliminar
-                    </button>
-                  </div>
-                </div>
-              `).join('');
+                      <div class="flex gap-2">
+                        <button class="edit-license-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
+                          data-license-id="${item.id}">
+                          Editar
+                        </button>
+                        <button class="delete-license-btn px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors" 
+                          data-license-id="${item.id}">
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                } else {
+                  // Aguinaldo
+                  return `
+                    <div class="border border-yellow-200 rounded p-3 flex justify-between items-center bg-yellow-50">
+                      <div>
+                        <div class="text-sm font-medium">
+                          ${item.label}
+                        </div>
+                        <div class="text-xs text-gray-600">
+                          ${item.details}
+                        </div>
+                        ${item.paidDate ? `
+                          <div class="text-xs text-gray-500">
+                            Fecha de pago: ${new Date(item.paidDate).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </div>
+                        ` : ''}
+                      </div>
+                      <div class="flex gap-2">
+                        <button class="edit-aguinaldo-btn px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors" 
+                          data-aguinaldo-id="${item.id}">
+                          Editar
+                        </button>
+                        <button class="delete-aguinaldo-btn px-2 py-1 text-xs bg-red-600 text-white rounded hover:bg-red-700 transition-colors" 
+                          data-aguinaldo-id="${item.id}">
+                          Eliminar
+                        </button>
+                      </div>
+                    </div>
+                  `;
+                }
+              }).join('');
             })()}
           </div>
         </div>
       </div>
     </div>
   `;
-  
-  document.body.appendChild(modal);
   
   // Wait for DOM to be ready before attaching handlers
   setTimeout(() => {
@@ -1160,36 +1868,15 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       }
     }
     
-    // Close handler
-    const closeBtn = document.getElementById('close-employee-details');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (modal && modal.parentNode) {
-          modal.remove();
-          selectedEmployeeId = null;
-        }
-      });
-    }
-    
-    // Prevent modal content clicks from closing the modal
-    const modalContent = modal.querySelector('div > div');
-    if (modalContent) {
-      modalContent.addEventListener('click', (e) => {
-        e.stopPropagation();
+    // Back button handler
+    const backBtn = document.getElementById('back-to-employees-btn');
+    if (backBtn) {
+      backBtn.addEventListener('click', async () => {
+        selectedEmployeeId = null;
+        await loadPayrollItems();
       });
     }
   }, 0);
-  
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      if (modal && modal.parentNode) {
-        modal.remove();
-        selectedEmployeeId = null;
-      }
-    }
-  });
   
   // Add salary button
   const addSalaryBtn = document.getElementById('add-salary-btn');
@@ -1227,6 +1914,23 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       } finally {
         hideSpinner();
         newLicenseBtn.disabled = false;
+      }
+    });
+  }
+  
+  // Add aguinaldo button (mark as paid)
+  const addAguinaldoBtn = document.getElementById('add-aguinaldo-btn');
+  if (addAguinaldoBtn) {
+    const newAguinaldoBtn = addAguinaldoBtn.cloneNode(true);
+    addAguinaldoBtn.parentNode.replaceChild(newAguinaldoBtn, addAguinaldoBtn);
+    
+    newAguinaldoBtn.addEventListener('click', async () => {
+      if (newAguinaldoBtn.disabled) return;
+      showSpinner('Cargando formulario...');
+      try {
+        await showAguinaldoPaymentForm(employeeId, recordsYear);
+      } finally {
+        hideSpinner();
       }
     });
   }
@@ -1354,6 +2058,78 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       }
     });
   });
+  
+  // Edit aguinaldo buttons
+  document.querySelectorAll('.edit-aguinaldo-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const aguinaldoId = e.target.dataset.aguinaldoId;
+      showSpinner('Cargando formulario...');
+      try {
+        const aguinaldo = Object.values(aguinaldoData).find(a => a && a.id === aguinaldoId);
+        if (aguinaldo) {
+          // Determine semester from notes
+          const isFirstSemester = aguinaldo.notes && aguinaldo.notes.includes('1er semestre');
+          // Open form with the appropriate semester pre-selected
+          await showAguinaldoPaymentForm(employeeId, recordsYear);
+          // After modal loads, set the semester
+          setTimeout(() => {
+            const semesterSelect = document.getElementById('aguinaldo-semester');
+            if (semesterSelect) {
+              semesterSelect.value = isFirstSemester ? 'first' : 'second';
+              semesterSelect.dispatchEvent(new Event('change'));
+            }
+          }, 200);
+        }
+      } finally {
+        hideSpinner();
+        btn.disabled = false;
+      }
+    });
+  });
+  
+  // Delete aguinaldo buttons
+  document.querySelectorAll('.delete-aguinaldo-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.disabled) return;
+      const aguinaldoId = e.target.dataset.aguinaldoId;
+      const aguinaldo = Object.values(aguinaldoData).find(a => a && a.id === aguinaldoId);
+      
+      if (!aguinaldo) {
+        await showError('No se encontró el aguinaldo');
+        return;
+      }
+      
+      // Extract semester from notes
+      const semesterText = aguinaldo.notes && aguinaldo.notes.includes('1er semestre') ? '1er Semestre' : '2do Semestre';
+      const confirmed = await showConfirm('Eliminar Aguinaldo', `¿Está seguro de eliminar el aguinaldo del ${semesterText} ${aguinaldo.year}?`);
+      
+      if (!confirmed) return;
+      
+      btn.disabled = true;
+      showSpinner('Eliminando aguinaldo...');
+      
+      try {
+        // Delete the aguinaldo record (remove paidDate to unmark as paid)
+        await nrd.aguinaldo.update(aguinaldoId, {
+          paidDate: null,
+          updatedAt: Date.now()
+        });
+        
+        // Reload employee details to update display
+        await showEmployeeDetails(employeeId, 'Aguinaldo eliminado exitosamente');
+      } catch (error) {
+        console.error('Error deleting aguinaldo', error);
+        await showError('Error al eliminar el aguinaldo: ' + (error.message || 'Error desconocido'));
+        btn.disabled = false;
+      } finally {
+        hideSpinner();
+      }
+    });
+  });
 }
 
 // Show salary form (simplified version)
@@ -1366,10 +2142,37 @@ async function showSalaryForm(salaryId = null, employeeId = null) {
   
   await loadAllData();
   
-  const monthOptions = Array.from({length: 12}, (_, i) => {
-    const m = i + 1;
-    return `<option value="${m}">${getMonthName(m)}</option>`;
-  }).join('');
+  // Function to get available months for an employee in a specific year
+  function getAvailableMonths(empId, year, excludeSalaryId = null) {
+    if (!empId || !year) {
+      // If no employee or year, show all months
+      return Array.from({length: 12}, (_, i) => i + 1);
+    }
+    
+    // Get all salaries for this employee in this year
+    const employeeSalaries = Object.values(salariesData).filter(s => 
+      s.employeeId === empId && 
+      s.year === year &&
+      (!excludeSalaryId || s.id !== excludeSalaryId)
+    );
+    
+    // Get months that are already used
+    const usedMonths = new Set(employeeSalaries.map(s => s.month).filter(Boolean));
+    
+    // Return months that are not used
+    return Array.from({length: 12}, (_, i) => i + 1).filter(m => !usedMonths.has(m));
+  }
+  
+  // Function to generate month options HTML
+  function generateMonthOptions(empId, year, excludeSalaryId = null) {
+    const availableMonths = getAvailableMonths(empId, year, excludeSalaryId);
+    return availableMonths.map(m => 
+      `<option value="${m}">${getMonthName(m)}</option>`
+    ).join('');
+  }
+  
+  // Generate initial month options based on current year
+  const monthOptions = generateMonthOptions(employeeId, currentYear, salaryId);
 
   const formHtml = `
     <form id="salary-form-element" class="space-y-4">
@@ -1377,8 +2180,8 @@ async function showSalaryForm(salaryId = null, employeeId = null) {
       <div class="grid grid-cols-2 gap-4">
         <div>
           <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Año</label>
-          <input type="number" id="salary-year" min="2020" max="2100" required 
-            class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-red-600 bg-white text-sm"
+          <input type="number" id="salary-year" min="2020" max="2100" required readonly
+            class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-red-600 bg-gray-100 text-sm"
             value="${currentYear}">
         </div>
         <div>
@@ -1514,6 +2317,34 @@ async function showSalaryForm(salaryId = null, employeeId = null) {
   setupDecimalInput('salary-monthly-salary');
   setupDecimalInput('salary-extras');
   setupDecimalInput('salary-base-30-days');
+  
+  // Handle year change - update month options
+  const yearInput = document.getElementById('salary-year');
+  const monthSelect = document.getElementById('salary-month');
+  if (yearInput && monthSelect) {
+    yearInput.addEventListener('change', () => {
+      const year = parseInt(yearInput.value);
+      if (year && employeeId) {
+        const currentMonthValue = monthSelect.value; // Save current selection
+        const newOptions = generateMonthOptions(employeeId, year, salaryId);
+        monthSelect.innerHTML = '<option value="">Seleccione...</option>' + newOptions;
+        // Try to restore previous selection if still available
+        if (currentMonthValue) {
+          const option = monthSelect.querySelector(`option[value="${currentMonthValue}"]`);
+          if (option) {
+            monthSelect.value = currentMonthValue;
+          }
+        }
+      } else {
+        // If no year or employee, show all months
+        const allMonths = Array.from({length: 12}, (_, i) => {
+          const m = i + 1;
+          return `<option value="${m}">${getMonthName(m)}</option>`;
+        }).join('');
+        monthSelect.innerHTML = '<option value="">Seleccione...</option>' + allMonths;
+      }
+    });
+  }
 
   // Load salary data if editing
   if (salaryId) {
@@ -1583,18 +2414,42 @@ async function showSalaryForm(salaryId = null, employeeId = null) {
     showSpinner('Guardando y calculando...');
 
     try {
-      const salaryData = {
-        employeeId,
-        year,
-        month,
-        type,
-        baseSalary30Days
-      };
-
+      let salaryData = {};
+      
       if (type === 'daily') {
-        salaryData.dailyWage = parseDecimalWithComma(dailyWageValue);
+        // If it's daily wage type
+        const dailyWage = parseDecimalWithComma(dailyWageValue);
+        // Calculate baseSalary30Days = dailyWage * 30
+        const calculatedBase30 = dailyWage * 30;
+        // Calculate monthlySalary = dailyWage * 30
+        const calculatedMonthly = dailyWage * 30;
+        
+        salaryData = {
+          employeeId,
+          year,
+          month,
+          type: 'daily',
+          dailyWage,
+          baseSalary30Days: calculatedBase30,
+          monthlySalary: calculatedMonthly
+        };
       } else {
-        salaryData.monthlySalary = parseDecimalWithComma(monthlySalaryValue);
+        // If it's monthly salary type
+        const monthlySalary = parseDecimalWithComma(monthlySalaryValue);
+        // Calculate baseSalary30Days = monthlySalary (same value)
+        const calculatedBase30 = monthlySalary;
+        // Calculate dailyWage = monthlySalary / 30
+        const calculatedDailyWage = monthlySalary / 30;
+        
+        salaryData = {
+          employeeId,
+          year,
+          month,
+          type: 'monthly',
+          monthlySalary,
+          baseSalary30Days: calculatedBase30,
+          dailyWage: calculatedDailyWage
+        };
       }
 
       if (extras !== undefined) {
@@ -1667,6 +2522,49 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
   
   await loadAllData();
   
+  // Calculate daily wage for vacation salary calculation
+  // Use the same logic as calculateEmployeeSummary: last salary of currentYear (most recent month)
+  const allEmployeeSalaries = Object.values(salariesData).filter(s => 
+    s.employeeId === employeeId
+  );
+  
+  // Get salaries from currentYear, sorted by month descending to get the last salary
+  const currentYearSalariesForWage = allEmployeeSalaries
+    .filter(s => s.year === currentYear && s.month)
+    .sort((a, b) => {
+      // Sort by month descending to get the last salary (most recent month)
+      // If months are equal, prefer the one with dailyWage if available
+      if ((b.month || 0) !== (a.month || 0)) {
+        return (b.month || 0) - (a.month || 0);
+      }
+      // If same month, prefer one with dailyWage
+      if (b.dailyWage && !a.dailyWage) return -1;
+      if (a.dailyWage && !b.dailyWage) return 1;
+      return 0;
+    });
+  
+  let dailyWageForVacationSalary = 0;
+  
+  if (currentYearSalariesForWage.length > 0) {
+    // Get the last salary (most recent month)
+    const lastSalary = currentYearSalariesForWage[0];
+    
+    // Try to get dailyWage directly from the salary record first
+    if (lastSalary.dailyWage && lastSalary.dailyWage > 0) {
+      dailyWageForVacationSalary = parseFloat(lastSalary.dailyWage);
+    } else {
+      // Calculate daily wage from baseSalary30Days + extras
+      const base = parseFloat(lastSalary.baseSalary30Days) || 0;
+      const extras = parseFloat(lastSalary.extras) || 0;
+      const totalMonthly = base + extras;
+      dailyWageForVacationSalary = totalMonthly / 30;
+    }
+  }
+  
+  // Calculate available days (Saldo Días de Licencia) for display in label
+  const summary = calculateEmployeeSummary(employeeId, currentYear);
+  const availableDays = Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0));
+  
   const monthOptions = Array.from({length: 12}, (_, i) => {
     const m = i + 1;
     return `<option value="${m}">${getMonthName(m)}</option>`;
@@ -1692,10 +2590,21 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
         </div>
       </div>
       <div>
-        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Días Tomados</label>
+        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Días Tomados (${formatNumber(availableDays)} disponibles)</label>
         <input type="text" id="license-days-taken" inputmode="decimal" required 
           class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-red-600 bg-white text-sm"
           placeholder="0,0">
+      </div>
+      <div class="bg-blue-50 border border-blue-200 rounded p-3 space-y-2">
+        <div class="flex justify-between items-center">
+          <span class="text-xs text-gray-600 font-medium">Jornal Diario para Cálculo:</span>
+          <span class="text-sm font-semibold text-blue-700" id="license-daily-wage-display">${formatCurrency(dailyWageForVacationSalary || 0)}</span>
+        </div>
+        <div class="flex justify-between items-center pt-1 border-t border-blue-200">
+          <span class="text-xs text-gray-600 font-medium">Salario Vacacional Estimado:</span>
+          <span class="text-sm font-semibold text-blue-700" id="license-vacation-salary-estimate">$0,00</span>
+        </div>
+        <p class="text-xs text-gray-500 mt-1">Se calcula automáticamente: días tomados × jornal diario</p>
       </div>
       <div class="grid grid-cols-2 gap-4">
         <div>
@@ -1761,6 +2670,26 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
   
   // Setup decimal input with comma
   setupDecimalInput('license-days-taken');
+  
+  // Calculate and update vacation salary estimate when days taken changes
+  const daysTakenInput = document.getElementById('license-days-taken');
+  const vacationSalaryEstimate = document.getElementById('license-vacation-salary-estimate');
+  
+  function updateVacationSalaryEstimate() {
+    if (!daysTakenInput || !vacationSalaryEstimate || !dailyWageForVacationSalary) return;
+    
+    const daysTaken = parseDecimalWithComma(daysTakenInput.value);
+    if (daysTaken !== null && daysTaken > 0 && dailyWageForVacationSalary > 0) {
+      const estimatedVacationSalary = daysTaken * dailyWageForVacationSalary;
+      vacationSalaryEstimate.textContent = formatCurrency(estimatedVacationSalary);
+    } else {
+      vacationSalaryEstimate.textContent = '$0,00';
+    }
+  }
+  
+  if (daysTakenInput) {
+    daysTakenInput.addEventListener('input', updateVacationSalaryEstimate);
+  }
 
   // Load license data if editing
   if (licenseId) {
@@ -1777,6 +2706,11 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
           document.getElementById('license-end-date').value = new Date(license.endDate).toISOString().split('T')[0];
         }
         document.getElementById('license-notes').value = license.notes || '';
+        
+        // Update vacation salary estimate after loading license data
+        setTimeout(() => {
+          updateVacationSalaryEstimate();
+        }, 100);
       }
     } catch (error) {
       logger.error('Error loading license', error);
@@ -1883,6 +2817,352 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
   // Close handlers
   document.getElementById('close-license-form').addEventListener('click', () => modal.remove());
   document.getElementById('cancel-license-btn').addEventListener('click', () => modal.remove());
+  
+  // Close modal when clicking outside (on the backdrop only)
+  // Prevent closing when clicking inside the modal content
+  modal.addEventListener('click', (e) => {
+    // Only close if clicking directly on the modal backdrop (not on any child elements)
+    if (e.target === modal) {
+      modal.remove();
+    }
+  });
+  
+  // Prevent clicks inside the modal content from bubbling up and closing the modal
+  const modalContent = modal.querySelector('.bg-white');
+  if (modalContent) {
+    modalContent.addEventListener('click', (e) => {
+      e.stopPropagation();
+    });
+  }
+}
+
+// Show aguinaldo payment form (mark as paid)
+async function showAguinaldoPaymentForm(employeeId, year) {
+  const existingModal = document.getElementById('aguinaldo-payment-modal');
+  if (existingModal) {
+    existingModal.remove();
+  }
+  
+  await loadAllData();
+  
+  // Calculate aguinaldos by semester
+  const displayYear = year - 1;
+  const allEmployeeSalaries = Object.values(salariesData).filter(s => 
+    s.employeeId === employeeId
+  );
+  
+  // 1er semestre: December of display year + January to May of current year
+  const displayYearDecSalaries = allEmployeeSalaries.filter(s => 
+    s.year === displayYear && s.month === 12
+  );
+  const currentYearSalaries = allEmployeeSalaries.filter(s => 
+    s.year === year
+  );
+  const firstSemesterCurrentYear = currentYearSalaries.filter(s => 
+    s.month >= 1 && s.month <= 5
+  );
+  const firstSemesterSalaries = [...displayYearDecSalaries, ...firstSemesterCurrentYear];
+  
+  // 2do semestre: June to November of current year
+  const secondSemesterSalaries = currentYearSalaries.filter(s => 
+    s.month >= 6 && s.month <= 11
+  );
+  
+  // Calculate aguinaldo for first semester
+  let firstSemesterAguinaldo = 0;
+  if (firstSemesterSalaries.length > 0) {
+    const totalHaberesGravados = firstSemesterSalaries.reduce((sum, salary) => {
+      const base = parseFloat(salary.baseSalary30Days) || 0;
+      const extras = parseFloat(salary.extras) || 0;
+      return sum + (base + extras);
+    }, 0);
+    firstSemesterAguinaldo = totalHaberesGravados / 12;
+  }
+  
+  // Calculate aguinaldo for second semester
+  let secondSemesterAguinaldo = 0;
+  if (secondSemesterSalaries.length > 0) {
+    const totalHaberesGravados = secondSemesterSalaries.reduce((sum, salary) => {
+      const base = parseFloat(salary.baseSalary30Days) || 0;
+      const extras = parseFloat(salary.extras) || 0;
+      return sum + (base + extras);
+    }, 0);
+    secondSemesterAguinaldo = totalHaberesGravados / 12;
+  }
+  
+  // Find existing aguinaldo records
+  const existingAguinaldos = Object.values(aguinaldoData).filter(a => 
+    a && a.employeeId === employeeId && a.year === year
+  );
+  const firstSemesterAguinaldoRecord = existingAguinaldos.find(a => 
+    a.notes && (a.notes.includes('1er semestre') || a.notes.includes('primer semestre'))
+  );
+  const secondSemesterAguinaldoRecord = existingAguinaldos.find(a => 
+    a.notes && (a.notes.includes('2do semestre') || a.notes.includes('segundo semestre'))
+  );
+  
+  // Check if each semester has pending balance (amount > 0 and not paid)
+  const firstSemesterPaid = firstSemesterAguinaldoRecord && firstSemesterAguinaldoRecord.paidDate;
+  const secondSemesterPaid = secondSemesterAguinaldoRecord && secondSemesterAguinaldoRecord.paidDate;
+  
+  const hasFirstSemesterPending = firstSemesterAguinaldo > 0 && !firstSemesterPaid;
+  const hasSecondSemesterPending = secondSemesterAguinaldo > 0 && !secondSemesterPaid;
+  
+  const formHtml = `
+    <form id="aguinaldo-payment-form-element" class="space-y-4">
+      <div>
+        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Año</label>
+        <input type="number" id="aguinaldo-year" min="2020" max="2100" required readonly
+          class="w-full px-3 py-2 border border-gray-300 rounded bg-gray-100 text-sm"
+          value="${year}">
+      </div>
+      <div>
+        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Período de Aguinaldo</label>
+        <select id="aguinaldo-semester" required
+          class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-red-600 bg-white text-sm">
+          <option value="">Seleccione...</option>
+          ${hasFirstSemesterPending ? `<option value="first" ${firstSemesterAguinaldoRecord ? 'data-record-id="' + firstSemesterAguinaldoRecord.id + '"' : ''}>1er Semestre (Dic ${displayYear} - May ${year})</option>` : ''}
+          ${hasSecondSemesterPending ? `<option value="second" ${secondSemesterAguinaldoRecord ? 'data-record-id="' + secondSemesterAguinaldoRecord.id + '"' : ''}>2do Semestre (Jun ${year} - Nov ${year})</option>` : ''}
+        </select>
+      </div>
+      <div>
+        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Monto</label>
+        <input type="text" id="aguinaldo-amount" required readonly
+          class="w-full px-3 py-2 border border-gray-300 rounded bg-gray-100 text-sm"
+          value="$0,00">
+        <p class="text-xs text-gray-500 mt-1">El monto se actualiza según el período seleccionado</p>
+      </div>
+      <div>
+        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Fecha de Pago</label>
+        <input type="date" id="aguinaldo-paid-date" required
+          class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-red-600 bg-white text-sm">
+      </div>
+      <div>
+        <label class="block mb-1.5 text-xs uppercase tracking-wider text-gray-600">Notas (opcional)</label>
+        <textarea id="aguinaldo-notes" rows="3"
+          class="w-full px-3 py-2 border border-gray-300 rounded focus:outline-none focus:border-red-600 bg-white text-sm"></textarea>
+      </div>
+      <div class="flex gap-3 pt-4 border-t border-gray-200">
+        <button type="submit" class="flex-1 px-4 py-2 bg-green-600 text-white border border-green-600 hover:bg-green-700 transition-colors uppercase tracking-wider text-xs font-light">
+          Guardar
+        </button>
+        <button type="button" id="cancel-aguinaldo-payment-btn" class="flex-1 px-4 py-2 border border-gray-300 hover:border-red-600 hover:text-red-600 transition-colors uppercase tracking-wider text-xs font-light">
+          Cancelar
+        </button>
+      </div>
+    </form>
+  `;
+
+  const modal = document.createElement('div');
+  modal.id = 'aguinaldo-payment-modal';
+  modal.className = 'fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4';
+  modal.style.overflowY = 'auto';
+  modal.innerHTML = `
+    <div class="bg-white rounded-lg max-w-2xl w-full border border-gray-200 shadow-lg max-h-[90vh] overflow-y-auto">
+      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 bg-yellow-600">
+        <div class="flex items-center justify-between">
+          <h3 class="text-lg sm:text-xl font-semibold tracking-tight text-white">Marcar Aguinaldo como Pagado</h3>
+          <button id="close-aguinaldo-payment-form" class="text-white hover:text-gray-200 text-2xl font-light w-8 h-8 flex items-center justify-center hover:bg-white/20 transition-colors">×</button>
+        </div>
+      </div>
+      <div class="p-4 sm:p-6">
+        ${formHtml}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  
+  // Update amount when semester changes
+  const semesterSelect = document.getElementById('aguinaldo-semester');
+  const amountInput = document.getElementById('aguinaldo-amount');
+  let selectedRecordId = null;
+  
+  if (semesterSelect && amountInput) {
+    // Function to load record data when semester is selected
+    function loadRecordData() {
+      const semester = semesterSelect.value;
+      const paidDateInput = document.getElementById('aguinaldo-paid-date');
+      const notesInput = document.getElementById('aguinaldo-notes');
+      
+      if (semester === 'first' && firstSemesterAguinaldoRecord) {
+        selectedRecordId = firstSemesterAguinaldoRecord.id;
+        if (paidDateInput && firstSemesterAguinaldoRecord.paidDate) {
+          paidDateInput.value = new Date(firstSemesterAguinaldoRecord.paidDate).toISOString().split('T')[0];
+        }
+        if (notesInput && firstSemesterAguinaldoRecord.notes) {
+          const notesParts = firstSemesterAguinaldoRecord.notes.split(' | ');
+          const customNotes = notesParts.length > 1 ? notesParts.slice(1).join(' | ') : '';
+          notesInput.value = customNotes;
+        }
+      } else if (semester === 'second' && secondSemesterAguinaldoRecord) {
+        selectedRecordId = secondSemesterAguinaldoRecord.id;
+        if (paidDateInput && secondSemesterAguinaldoRecord.paidDate) {
+          paidDateInput.value = new Date(secondSemesterAguinaldoRecord.paidDate).toISOString().split('T')[0];
+        }
+        if (notesInput && secondSemesterAguinaldoRecord.notes) {
+          const notesParts = secondSemesterAguinaldoRecord.notes.split(' | ');
+          const customNotes = notesParts.length > 1 ? notesParts.slice(1).join(' | ') : '';
+          notesInput.value = customNotes;
+        }
+      } else {
+        selectedRecordId = null;
+        if (paidDateInput) paidDateInput.value = '';
+        if (notesInput) notesInput.value = '';
+      }
+    }
+    
+    // Update amount and record data when semester changes
+    semesterSelect.addEventListener('change', () => {
+      const semester = semesterSelect.value;
+      const selectedIndex = semesterSelect.selectedIndex;
+      const selectedOption = selectedIndex >= 0 && selectedIndex < semesterSelect.options.length 
+        ? semesterSelect.options[selectedIndex] 
+        : null;
+      selectedRecordId = selectedOption && selectedOption.dataset ? selectedOption.dataset.recordId || null : null;
+      
+      if (semester === 'first') {
+        amountInput.value = formatCurrency(Math.round(firstSemesterAguinaldo * 100) / 100);
+      } else if (semester === 'second') {
+        amountInput.value = formatCurrency(Math.round(secondSemesterAguinaldo * 100) / 100);
+      } else {
+        amountInput.value = '$0,00';
+        selectedRecordId = null;
+      }
+      
+      // Load existing record data for the selected semester
+      loadRecordData();
+    });
+    
+    // Set initial value if there's only one pending period
+    if (hasFirstSemesterPending && !hasSecondSemesterPending) {
+      semesterSelect.value = 'first';
+      semesterSelect.dispatchEvent(new Event('change'));
+    } else if (hasSecondSemesterPending && !hasFirstSemesterPending) {
+      semesterSelect.value = 'second';
+      semesterSelect.dispatchEvent(new Event('change'));
+    }
+  }
+
+  // Form submit
+  const formElement = document.getElementById('aguinaldo-payment-form-element');
+  formElement.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const semester = document.getElementById('aguinaldo-semester').value;
+    const paidDateInput = document.getElementById('aguinaldo-paid-date').value;
+    const notesInput = document.getElementById('aguinaldo-notes').value.trim();
+
+    if (!semester) {
+      await showError('Por favor seleccione el período de aguinaldo');
+      return;
+    }
+
+    if (!paidDateInput) {
+      await showError('Por favor ingrese la fecha de pago');
+      return;
+    }
+
+    // Validate that payment date is in the month after the semester ends
+    const paidDate = new Date(paidDateInput);
+    const paidYear = paidDate.getFullYear();
+    const paidMonth = paidDate.getMonth() + 1; // getMonth() returns 0-11, so add 1
+    
+    let isValidPaymentDate = false;
+    let expectedPaymentMonth = null;
+    let expectedPaymentYear = null;
+    
+    if (semester === 'first') {
+      // 1er semestre: Dic displayYear - May year, se paga en Junio del year
+      expectedPaymentMonth = 6; // Junio
+      expectedPaymentYear = year;
+      isValidPaymentDate = paidYear === expectedPaymentYear && paidMonth === expectedPaymentMonth;
+    } else if (semester === 'second') {
+      // 2do semestre: Jun year - Nov year, se paga en Diciembre del year
+      expectedPaymentMonth = 12; // Diciembre
+      expectedPaymentYear = year;
+      isValidPaymentDate = paidYear === expectedPaymentYear && paidMonth === expectedPaymentMonth;
+    }
+    
+    if (!isValidPaymentDate) {
+      const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const expectedMonthName = monthNames[expectedPaymentMonth - 1];
+      await showError(`El pago del ${semester === 'first' ? '1er' : '2do'} semestre debe realizarse en ${expectedMonthName} ${expectedPaymentYear}`);
+      return;
+    }
+
+    showSpinner('Guardando...');
+    const submitBtn = formElement.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+
+    try {
+      // Parse date string (YYYY-MM-DD) and create date in local timezone to avoid timezone issues
+      const [year, month, day] = paidDateInput.split('-').map(Number);
+      const paidDate = new Date(year, month - 1, day).getTime();
+      const semesterText = semester === 'first' ? '1er semestre' : '2do semestre';
+      const semesterAmount = semester === 'first' ? 
+        Math.round(firstSemesterAguinaldo * 100) / 100 : 
+        Math.round(secondSemesterAguinaldo * 100) / 100;
+      
+      // Combine notes
+      let notes = `Período: ${semesterText}`;
+      if (notesInput) {
+        notes += ` | ${notesInput}`;
+      }
+      
+      const aguinaldoRecord = {
+        employeeId,
+        year,
+        amount: semesterAmount,
+        paidDate,
+        notes,
+        updatedAt: Date.now()
+      };
+
+      // Use existing record if editing, otherwise create new
+      if (selectedRecordId) {
+        const existingRecord = Object.values(aguinaldoData).find(a => a.id === selectedRecordId);
+        if (existingRecord && existingRecord.createdAt) {
+          aguinaldoRecord.createdAt = existingRecord.createdAt;
+        }
+        await nrd.aguinaldo.update(selectedRecordId, aguinaldoRecord);
+      } else {
+        aguinaldoRecord.createdAt = Date.now();
+        await nrd.aguinaldo.create(aguinaldoRecord);
+      }
+
+      modal.remove();
+      
+      // Reload data to ensure we have the latest aguinaldo records
+      await loadAllData();
+      
+      // Recalculate payroll items to update summary boxes
+      if (typeof window.recalculatePayrollItems === 'function') {
+        try {
+          await window.recalculatePayrollItems(employeeId, year);
+          await loadAllData(); // Reload again after recalculation
+        } catch (calcError) {
+          logger.warn('Error recalculating payroll items after aguinaldo save (non-blocking)', { employeeId, year, error: calcError });
+        }
+      }
+      
+      const successMessage = 'Aguinaldo marcado como pagado exitosamente';
+      if (selectedEmployeeId) {
+        await showEmployeeDetails(selectedEmployeeId, successMessage);
+      } else {
+        await loadPayrollItems();
+      }
+    } catch (error) {
+      logger.error('Error saving aguinaldo payment', error);
+      await showError('Error al guardar: ' + (error.message || 'Error desconocido'));
+    } finally {
+      hideSpinner();
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+
+  // Close handlers
+  document.getElementById('close-aguinaldo-payment-form').addEventListener('click', () => modal.remove());
+  document.getElementById('cancel-aguinaldo-payment-btn').addEventListener('click', () => modal.remove());
   modal.addEventListener('click', (e) => {
     if (e.target === modal) modal.remove();
   });
