@@ -1567,48 +1567,48 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       
       <div class="p-4 sm:p-6 space-y-6">
         <!-- Summary Cards -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
-          <div class="bg-green-50 p-3 rounded border border-green-200">
-            <div class="flex justify-between items-center mb-1">
-              <div class="text-xs text-gray-600">Saldo Días de Licencia:</div>
-              <div class="text-lg font-medium text-green-600 cursor-help text-right" title="${escapeHtml(daysRemainingFormula)}">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)))}</div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div class="bg-green-50 p-2.5 sm:p-3 rounded border border-green-200">
+            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-1 gap-1">
+              <div class="text-xs text-gray-600 leading-tight">Saldo Días de Licencia:</div>
+              <div class="text-base sm:text-lg font-medium text-green-600 cursor-help sm:text-right" title="${escapeHtml(daysRemainingFormula)}">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)))}</div>
             </div>
-            <div class="pl-2 mt-2 space-y-1">
+            <div class="pl-0 sm:pl-2 mt-2 space-y-1">
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">Días generados ${displayYear}:</span>
-                <span class="font-medium text-green-600 text-right">${formatNumber(summary.daysAccumulated || 0)}</span>
+                <span class="font-medium text-green-600 sm:text-right">${formatNumber(summary.daysAccumulated || 0)}</span>
               </div>
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">Días gozados:</span>
-                <span class="font-medium text-green-600 text-right">${formatNumber(summary.daysTakenCurrentYear || 0)}</span>
+                <span class="font-medium text-green-600 sm:text-right">${formatNumber(summary.daysTakenCurrentYear || 0)}</span>
               </div>
             </div>
           </div>
-          <div class="bg-blue-50 p-3 rounded border border-blue-200">
-            <div class="flex justify-between items-center">
-              <div class="text-xs text-gray-600">Licencia No Gozada:</div>
-              <div class="text-lg font-medium text-blue-600 cursor-help text-right" title="${escapeHtml(licenseNotTakenFormula)}">${formatCurrency(summary.licenseNotTakenSalary || 0)}</div>
+          <div class="bg-blue-50 p-2.5 sm:p-3 rounded border border-blue-200">
+            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
+              <div class="text-xs text-gray-600 leading-tight">Licencia No Gozada:</div>
+              <div class="text-base sm:text-lg font-medium text-blue-600 cursor-help sm:text-right break-words" title="${escapeHtml(licenseNotTakenFormula)}">${formatCurrency(summary.licenseNotTakenSalary || 0)}</div>
             </div>
           </div>
-          <div class="bg-red-50 p-3 rounded border border-red-200">
-            <div class="flex justify-between items-center">
-              <div class="text-xs text-gray-600">Salario Vacacional:</div>
-              <div class="text-lg font-medium text-red-600 cursor-help text-right" title="${escapeHtml(vacationSalaryFormula)}">${formatCurrency(summary.vacationSalary)}</div>
+          <div class="bg-red-50 p-2.5 sm:p-3 rounded border border-red-200">
+            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-1">
+              <div class="text-xs text-gray-600 leading-tight">Salario Vacacional:</div>
+              <div class="text-base sm:text-lg font-medium text-red-600 cursor-help sm:text-right break-words" title="${escapeHtml(vacationSalaryFormula)}">${formatCurrency(summary.vacationSalary)}</div>
             </div>
           </div>
-          <div class="bg-yellow-50 p-3 rounded border border-yellow-200">
-            <div class="flex justify-between items-center mb-2">
-              <div class="text-xs text-gray-600">Saldo de Aguinaldo:</div>
-              <div class="text-lg font-medium text-yellow-600 text-right">${formatCurrency((summary.firstSemesterAguinaldo || 0) + (summary.secondSemesterAguinaldo || 0))}</div>
+          <div class="bg-yellow-50 p-2.5 sm:p-3 rounded border border-yellow-200">
+            <div class="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-2 gap-1">
+              <div class="text-xs text-gray-600 leading-tight">Saldo de Aguinaldo:</div>
+              <div class="text-base sm:text-lg font-medium text-yellow-600 sm:text-right break-words">${formatCurrency((summary.firstSemesterAguinaldo || 0) + (summary.secondSemesterAguinaldo || 0))}</div>
             </div>
-            <div class="pl-2 space-y-1">
+            <div class="pl-0 sm:pl-2 space-y-1">
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">12/${displayYear} - 05/${currentYear}:</span>
-                <span class="font-medium text-yellow-600 cursor-help" title="${escapeHtml(firstSemesterAguinaldoFormula)}">${formatCurrency(summary.firstSemesterAguinaldo || 0)}</span>
+                <span class="font-medium text-yellow-600 cursor-help break-words sm:text-right" title="${escapeHtml(firstSemesterAguinaldoFormula)}">${formatCurrency(summary.firstSemesterAguinaldo || 0)}</span>
               </div>
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">06/${currentYear} - 11/${currentYear}:</span>
-                <span class="font-medium text-yellow-600 cursor-help" title="${escapeHtml(secondSemesterAguinaldoFormula)}">${formatCurrency(summary.secondSemesterAguinaldo || 0)}</span>
+                <span class="font-medium text-yellow-600 cursor-help break-words sm:text-right" title="${escapeHtml(secondSemesterAguinaldoFormula)}">${formatCurrency(summary.secondSemesterAguinaldo || 0)}</span>
               </div>
             </div>
           </div>
