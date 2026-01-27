@@ -1,145 +1,166 @@
-// Main app controller
+// Main app controller (ES Module)
+// Using NRDCommon from CDN (loaded in index.html)
+const logger = window.logger || console;
 
-// Get nrd instance safely (always use window.nrd as it's set globally in index.html)
-var nrd = window.nrd;
+import { initializeDashboard } from './views/dashboard/dashboard.js';
+import { initializePayrollItems } from './views/payroll-items/payroll-items.js';
 
-// Navigation
-let currentView = null;
-
-function switchView(viewName) {
-  // Prevent duplicate loading
-  if (currentView === viewName) {
-    logger.debug('View already active, skipping', { viewName });
+// Setup navigation buttons
+function setupNavigationButtons() {
+  const navContainer = document.getElementById('app-nav-container');
+  if (!navContainer) {
+    logger.warn('Navigation container not found');
     return;
   }
   
-  logger.info('Switching view', { from: currentView, to: viewName });
-  currentView = viewName;
+  navContainer.className = 'bg-white border-b border-gray-200 flex overflow-x-auto';
+  
+  navContainer.innerHTML = `
+    <button class="nav-btn flex-1 px-3 sm:px-4 py-3 sm:py-3.5 border-b-2 border-red-600 text-red-600 bg-red-50 font-medium transition-colors uppercase tracking-wider text-xs sm:text-sm font-light" data-view="dashboard">Dashboard</button>
+    <button class="nav-btn flex-1 px-3 sm:px-4 py-3 sm:py-3.5 border-b-2 border-transparent text-gray-600 hover:text-red-600 transition-colors uppercase tracking-wider text-xs sm:text-sm font-light" data-view="payroll-items">Partidas Salariales</button>
+  `;
+}
 
-  // Hide all views
-  const views = ['dashboard', 'payroll-items'];
-  views.forEach(view => {
-    const viewElement = document.getElementById(`${view}-view`);
-    if (viewElement) {
-      viewElement.classList.add('hidden');
-    }
-  });
+// Navigation service will be created when NRDCommon is available
+let navigationService = null;
 
-  // Show selected view
-  const selectedView = document.getElementById(`${viewName}-view`);
-  if (selectedView) {
-    selectedView.classList.remove('hidden');
-    logger.debug('View shown', { viewName });
-  } else {
-    logger.warn('View element not found', { viewName });
-  }
-
-  // Update nav buttons
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    btn.classList.remove('border-red-600', 'text-red-600', 'bg-red-50', 'font-medium');
-    btn.classList.add('border-transparent', 'text-gray-600');
-  });
-  const activeBtn = document.querySelector(`[data-view="${viewName}"]`);
-  if (activeBtn) {
-    activeBtn.classList.remove('border-transparent', 'text-gray-600');
-    activeBtn.classList.add('border-red-600', 'text-red-600', 'bg-red-50', 'font-medium');
-  } else {
-    logger.warn('Active nav button not found', { viewName });
-  }
-
-  // Load data for the view
-  logger.debug('Loading view data', { viewName });
-  if (viewName === 'dashboard') {
-    if (typeof initializeDashboard === 'function') {
-      initializeDashboard();
-    } else if (typeof loadDashboard === 'function') {
-      loadDashboard();
-    }
-  } else if (viewName === 'payroll-items') {
-    if (typeof initializePayrollItems === 'function') {
-      initializePayrollItems();
-    } else if (typeof loadPayrollItems === 'function') {
-      loadPayrollItems();
-    }
+// Function to create and setup navigation service
+function createNavigationService() {
+  if (navigationService) {
+    return navigationService; // Already created
   }
   
-  logger.debug('View switched successfully', { viewName });
-}
-
-// Nav button handlers - use event delegation
-function setupNavButtons() {
-  logger.debug('Setting up nav button handlers');
-  document.querySelectorAll('.nav-btn').forEach(btn => {
-    // Remove existing listeners by cloning
-    const newBtn = btn.cloneNode(true);
-    btn.parentNode.replaceChild(newBtn, btn);
-    
-    newBtn.addEventListener('click', () => {
-      const view = newBtn.dataset.view;
-      logger.debug('Nav button clicked', { view });
-      switchView(view);
-    });
+  const NavigationService = window.NRDCommon?.NavigationService;
+  if (!NavigationService) {
+    logger.warn('NavigationService not available in NRDCommon');
+    return null;
+  }
+  
+  navigationService = new NavigationService();
+  window.navigationService = navigationService;
+  
+  // Register view handlers
+  navigationService.registerView('dashboard', () => {
+    if (typeof initializeDashboard === 'function') {
+      initializeDashboard();
+    }
   });
-  logger.debug('Nav button handlers attached');
-}
 
-// Helper function to wait for services to be available
-function waitForServices(maxWait = 5000) {
-  return new Promise((resolve, reject) => {
-    const startTime = Date.now();
-    const checkServices = () => {
-      const nrdInstance = typeof nrd !== 'undefined' ? nrd : window.nrd;
-      if (!nrdInstance) {
-        if (Date.now() - startTime >= maxWait) {
-          reject(new Error('NRD instance not found'));
-          return;
-        }
-        setTimeout(checkServices, 100);
-        return;
-      }
-      
-      // For RRHH, we need employees and the new RRHH services
-      const servicesAvailable = nrdInstance.employees && 
-                                nrdInstance.salaries;
-      
-      if (servicesAvailable) {
-        resolve(nrdInstance);
-      } else if (Date.now() - startTime >= maxWait) {
-        reject(new Error('Services not available after timeout'));
-      } else {
-        setTimeout(checkServices, 100);
-      }
-    };
-    checkServices();
+  navigationService.registerView('payroll-items', () => {
+    if (typeof initializePayrollItems === 'function') {
+      initializePayrollItems();
+    }
   });
+  
+  logger.info('NavigationService created and views registered');
+  return navigationService;
 }
 
 // Initialize app using NRD Data Access
-if (nrd && nrd.auth) {
-  nrd.auth.onAuthStateChanged((user) => {
-    if (user) {
-      logger.info('User authenticated, initializing app', { uid: user.uid, email: user.email });
-      // Wait for services to be available, then setup nav buttons and default view
-      waitForServices(5000)
-        .then(() => {
-          logger.debug('Services available, setting up app');
-          // Setup nav buttons after DOM is ready
-          setTimeout(() => {
-            setupNavButtons();
-            // Default to dashboard view
-            switchView('dashboard');
-          }, 100);
-        })
-        .catch((error) => {
-          logger.error('Failed to initialize services', error);
-          // Still setup nav buttons, but show error in dashboard
-          setTimeout(() => {
-            setupNavButtons();
-            switchView('dashboard');
-          }, 100);
-        });
-    } else {
-      logger.debug('User not authenticated, app initialization skipped');
+// Note: AuthService handles showing/hiding app-screen, we just setup navigation
+logger.info('app.js loaded, waiting for NRD to be available');
+
+// Wait for window.nrd and NRDCommon to be available (they're initialized in index.html)
+function waitForNRDAndInitialize() {
+  const maxWait = 10000; // 10 seconds
+  const startTime = Date.now();
+  const checkInterval = 100; // Check every 100ms
+  
+  const checkNRD = setInterval(() => {
+    const nrd = window.nrd;
+    const NRDCommon = window.NRDCommon;
+    
+    if (nrd && nrd.auth && NRDCommon) {
+      clearInterval(checkNRD);
+      logger.info('NRD, auth, and NRDCommon available, setting up onAuthStateChanged');
+      
+      // Create navigation service now that NRDCommon is available
+      createNavigationService();
+      
+      // Also listen to the current auth state immediately
+      const currentUser = nrd.auth.getCurrentUser();
+      if (currentUser) {
+        logger.info('Current user found, initializing immediately', { uid: currentUser.uid, email: currentUser.email });
+        initializeAppForUser(currentUser);
+      }
+      
+      nrd.auth.onAuthStateChanged((user) => {
+        logger.info('Auth state changed', { hasUser: !!user, uid: user?.uid, email: user?.email });
+        if (user) {
+          initializeAppForUser(user);
+        } else {
+          logger.debug('User not authenticated, app initialization skipped');
+        }
+      });
+    } else if (Date.now() - startTime >= maxWait) {
+      clearInterval(checkNRD);
+      logger.error('NRD, auth, or NRDCommon not available after timeout', { 
+        hasNrd: !!nrd, 
+        hasAuth: !!(nrd && nrd.auth),
+        hasNRDCommon: !!NRDCommon
+      });
     }
-  });
+  }, checkInterval);
 }
+
+// Start waiting for NRD and NRDCommon
+waitForNRDAndInitialize();
+
+function initializeAppForUser(user) {
+  logger.info('Initializing app for user', { uid: user.uid, email: user.email });
+  
+  // Ensure app-screen is visible (AuthService should have done this, but double-check)
+  const appScreen = document.getElementById('app-screen');
+  const loginScreen = document.getElementById('login-screen');
+  const redirectingScreen = document.getElementById('redirecting-screen');
+  
+  if (appScreen) {
+    appScreen.classList.remove('hidden');
+    logger.info('App screen shown');
+  }
+  if (loginScreen) {
+    loginScreen.classList.add('hidden');
+  }
+  if (redirectingScreen) {
+    redirectingScreen.classList.add('hidden');
+  }
+  
+  // Wait a bit for DOM to be ready, then setup navigation
+  setTimeout(() => {
+    // Create navigation service if not already created
+    const navService = createNavigationService();
+    if (!navService) {
+      logger.error('Could not create NavigationService');
+      return;
+    }
+    
+    logger.info('Setting up navigation and switching to dashboard');
+    setupNavigationButtons();
+    navService.setupNavButtons();
+    navService.switchView('dashboard');
+    
+    // Double-check that app-screen is visible
+    const appScreenCheck = document.getElementById('app-screen');
+    if (appScreenCheck && appScreenCheck.classList.contains('hidden')) {
+      logger.warn('App screen was hidden, showing it now');
+      appScreenCheck.classList.remove('hidden');
+    }
+    
+    // Also check that dashboard view is visible
+    const dashboardView = document.getElementById('dashboard-view');
+    if (dashboardView) {
+      if (dashboardView.classList.contains('hidden')) {
+        logger.warn('Dashboard view was hidden, showing it now');
+        dashboardView.classList.remove('hidden');
+      } else {
+        logger.info('Dashboard view is visible');
+      }
+    } else {
+      logger.error('Dashboard view element not found');
+    }
+  }, 300);
+}
+
+// AuthService is now initialized in index.html after NRDCommon loads
+// This ensures it handles the redirecting screen immediately
+// We don't need to initialize it here since it's already done in index.html

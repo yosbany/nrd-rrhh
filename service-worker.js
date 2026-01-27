@@ -1,6 +1,17 @@
-// Service Worker for PWA offline support
+// Service Worker for PWA offline support (Generic for all NRD projects)
+// This file should be copied to each project's root directory
 
-const CACHE_NAME = 'nrd-rrhh-v1-' + Date.now();
+// Get project name from service worker path or use default
+const getProjectName = () => {
+  const path = self.location.pathname;
+  // Extract project name from path (e.g., /nrd-rrhh/service-worker.js -> nrd-rrhh)
+  const match = path.match(/\/(nrd-[^/]+)\//);
+  return match ? match[1] : 'nrd-app';
+};
+
+const PROJECT_NAME = getProjectName();
+const CACHE_NAME = `${PROJECT_NAME}-v1-` + Date.now();
+
 // Get base path from service worker location
 const getBasePath = () => {
   const path = self.location.pathname;
@@ -8,9 +19,22 @@ const getBasePath = () => {
 };
 const BASE_PATH = getBasePath();
 
-// Install event - skip waiting to activate immediately
+// Install event - skip waiting to activate immediately and clear old caches
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  event.waitUntil(
+    caches.keys().then((cacheNames) => {
+      return Promise.all(
+        cacheNames.map((cacheName) => {
+          // Delete all old caches
+          if (cacheName.startsWith(`${PROJECT_NAME}-`)) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    }).then(() => {
+      self.skipWaiting();
+    })
+  );
 });
 
 // Activate event - clean up old caches
@@ -19,8 +43,8 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          // Delete all old caches
-          if (cacheName.startsWith('nrd-rrhh-')) {
+          // Delete all old caches for this project
+          if (cacheName.startsWith(`${PROJECT_NAME}-`)) {
             return caches.delete(cacheName);
           }
         })
@@ -58,45 +82,33 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Skip Tailwind CDN - always fetch from network
+  if (event.request.url.includes('cdn.tailwindcss.com')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
   // Network first strategy for HTML, JS, and CSS files
-  // Always fetch from network for files with version parameters or dynamic content
+  // Always fetch from network - never cache these files
   if (event.request.url.includes('.html') || 
       event.request.url.includes('.js') || 
       event.request.url.includes('.css')) {
     
-    // If URL has version parameter, always fetch from network and don't cache
-    if (event.request.url.includes('?v=') || event.request.url.includes('&v=')) {
-      event.respondWith(
-        fetch(event.request)
-          .then((response) => {
-            return response;
-          })
-          .catch(() => {
-            // If network fails, try cache without version parameter
-            const urlWithoutVersion = event.request.url.split('?')[0].split('&')[0];
-            return caches.match(urlWithoutVersion).then((cachedResponse) => {
-              if (cachedResponse) {
-                return cachedResponse;
-              }
-              // If both fail and it's a navigation request, return cached index.html
-              if (event.request.mode === 'navigate') {
-                return caches.match(BASE_PATH + 'index.html');
-              }
-            });
-          })
-      );
-      return;
-    }
-    
-    // For files without version, use network first but cache for offline
+    // Always fetch from network with no-cache headers
     event.respondWith(
-      fetch(event.request, { cache: 'no-store' })
+      fetch(event.request, { 
+        cache: 'no-store',
+        headers: {
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        }
+      })
         .then((response) => {
           // Don't cache HTML, JS, CSS files - always fetch fresh
           return response;
         })
         .catch(() => {
-          // If network fails, try cache
+          // If network fails, try cache as fallback
           return caches.match(event.request).then((cachedResponse) => {
             if (cachedResponse) {
               return cachedResponse;
@@ -111,26 +123,29 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For other resources, try cache first, then network
+  // For other resources (images, fonts, etc.), use network first, cache as fallback
+  // But don't cache aggressively in development
   event.respondWith(
-    caches.match(event.request)
-      .then((cachedResponse) => {
-        if (cachedResponse) {
-          return cachedResponse;
+    fetch(event.request, { cache: 'no-store' })
+      .then((response) => {
+        // Only cache successful responses for non-HTML/JS/CSS files
+        if (response && response.status === 200 && response.type === 'basic') {
+          // Don't cache in development - always fetch fresh
+          // Uncomment below for production caching of static assets
+          // const responseToCache = response.clone();
+          // caches.open(CACHE_NAME).then((cache) => {
+          //   cache.put(event.request, responseToCache).catch((err) => {
+          //     console.warn('Failed to cache:', event.request.url, err);
+          //   });
+          // }).catch((err) => {
+          //   console.warn('Failed to open cache:', err);
+          // });
         }
-        return fetch(event.request).then((response) => {
-          if (response && response.status === 200 && response.type === 'basic') {
-            const responseToCache = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(event.request, responseToCache).catch((err) => {
-                console.warn('Failed to cache:', event.request.url, err);
-              });
-            }).catch((err) => {
-              console.warn('Failed to open cache:', err);
-            });
-          }
-          return response;
-        });
+        return response;
+      })
+      .catch(() => {
+        // If network fails, try cache as fallback
+        return caches.match(event.request);
       })
   );
 });

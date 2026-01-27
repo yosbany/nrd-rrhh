@@ -16,20 +16,16 @@ Sistema para gestionar empleados, licencias, salarios, salario vacacional y agui
 nrd-rrhh/
 ├── index.html          # HTML principal
 ├── app.js              # Controlador principal de navegación
-├── auth.js             # Autenticación
-├── modal.js            # Sistema de modales y alertas
-├── logger.js            # Sistema de logging
-├── styles.css           # Estilos mínimos
 ├── manifest.json        # Configuración PWA
 ├── service-worker.js    # Service Worker para PWA
-├── tabs/                # Módulos por funcionalidad
-│   ├── dashboard.js     # Dashboard principal
-│   ├── employees.js     # Gestión de empleados
-│   ├── licenses.js      # Gestión de licencias
-│   ├── salaries.js     # Gestión de salarios
-│   ├── vacations.js    # Salario vacacional
-│   └── aguinaldo.js    # Aguinaldo
-└── tools/              # Herramientas del proyecto
+├── assets/              # Archivos estáticos
+│   ├── icons/          # Iconos de la aplicación
+│   └── styles/         # Estilos CSS
+├── modules/             # Módulos específicos del negocio
+│   └── business/       # Lógica de negocio (payroll)
+└── views/               # Vistas de la aplicación
+    ├── dashboard/      # Vista de dashboard
+    └── payroll-items/  # Vista de partidas salariales
 ```
 
 ## Desarrollo
@@ -38,7 +34,8 @@ La aplicación sigue el mismo patrón arquitectónico que las otras apps del sis
 - JavaScript ES6 nativo (sin frameworks)
 - Tailwind CSS (via CDN)
 - Firebase Realtime Database
-- NRD Data Access Library
+- NRD Data Access Library (desde CDN)
+- NRD Common Library (desde CDN) - módulos comunes (logger, UI, utils, services)
 
 ## Modelos de Datos
 

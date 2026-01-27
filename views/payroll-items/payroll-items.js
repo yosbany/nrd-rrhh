@@ -1,9 +1,53 @@
-// Payroll Items Management - Consolidated view
-(function() {
-'use strict';
+// Payroll Items Management - Consolidated view (ES Module)
+// Using NRDCommon from CDN (loaded in index.html)
+const logger = window.logger || console;
+const escapeHtml = window.escapeHtml || ((text) => String(text));
+const getMonthName = window.getMonthName || ((m) => ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][m-1] || '');
+// Use the function from nrd-rrhh/modules/utils.js (loaded in index.html)
+const isEmployeeActiveInYear = window.isEmployeeActiveInYear || ((employee, year) => {
+  // Fallback implementation if module not loaded
+  if (!employee) return false;
+  
+  const targetYear = typeof year === 'number' ? year : parseInt(year);
+  if (isNaN(targetYear)) return false;
+  
+  // Check startDate: if employee started AFTER the target year, they were NOT active
+  if (employee.startDate) {
+    const startDate = new Date(employee.startDate);
+    if (!isNaN(startDate.getTime())) {
+      const startYear = startDate.getFullYear();
+      if (startYear > targetYear) {
+        return false; // Employee started after the target year
+      }
+    }
+  }
+  
+  // Check endDate: if employee ended BEFORE the target year, they were NOT active
+  if (employee.endDate) {
+    const endDate = new Date(employee.endDate);
+    if (!isNaN(endDate.getTime())) {
+      const endYear = endDate.getFullYear();
+      if (endYear < targetYear) {
+        return false; // Employee ended before the target year
+      }
+    }
+  }
+  
+  return true; // Employee was active during the year
+});
+const formatNumber = window.formatNumber || ((v) => String(v));
+const formatCurrency = window.formatCurrency || ((v) => '$' + String(v));
+const parseDecimalWithComma = window.parseDecimalWithComma || ((v) => parseFloat(String(v).replace(',', '.')) || null);
+const formatDecimalWithComma = window.formatDecimalWithComma || ((v) => String(v).replace('.', ','));
+const showSpinner = window.showSpinner || (() => {});
+const hideSpinner = window.hideSpinner || (() => {});
+const showConfirm = window.showConfirm || (() => Promise.resolve(false));
+const showSuccess = window.showSuccess || (() => Promise.resolve());
+const showError = window.showError || (() => Promise.resolve());
 
-// Get nrd instance safely
-var nrd = window.nrd;
+// Get nrd instance (initialized in index.html)
+// Get nrd instance dynamically (initialized in index.html)
+// Don't cache it at module level as it may not be available yet
 
 let payrollItemsListener = null;
 let employeesData = {};
@@ -15,89 +59,13 @@ let currentYear = new Date().getFullYear();
 let selectedEmployeeId = null;
 let filteredEmployeeId = null; // For employee filter in payroll items view
 
-// Helper function to escape HTML
-function escapeHtml(text) {
-  if (!text) return '';
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-// Get month name
-function getMonthName(month) {
-  const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-  return months[month - 1] || '';
-}
-
-// Check if employee was active (vigente) during a specific year
-function isEmployeeActiveInYear(employee, year) {
-  if (!employee) return false;
-  
-  const yearStart = new Date(year, 0, 1); // January 1 of the year
-  const yearEnd = new Date(year, 11, 31); // December 31 of the year
-  
-  // Check startDate: employee must have started before or during the year
-  if (employee.startDate) {
-    const startDate = new Date(employee.startDate);
-    if (startDate > yearEnd) {
-      return false; // Employee started after the year ended
-    }
-  }
-  
-  // Check endDate: if exists, employee must have ended after or during the year
-  if (employee.endDate) {
-    const endDate = new Date(employee.endDate);
-    if (endDate < yearStart) {
-      return false; // Employee ended before the year started
-    }
-  }
-  
-  // Employee was active during the year
-  return true;
-}
-
-// Helper functions for decimal number handling with comma
-function parseDecimalWithComma(value) {
-  if (!value || value === '') return null;
-  // Replace comma with dot for parsing
-  const normalized = String(value).replace(',', '.');
-  const parsed = parseFloat(normalized);
-  return isNaN(parsed) ? null : parsed;
-}
-
-function formatDecimalWithComma(value) {
-  if (value === null || value === undefined || isNaN(value)) return '';
-  // Convert to string and replace dot with comma
-  return String(value).replace('.', ',');
-}
-
-// Format number with comma for decimals and dot for thousands
-// Always round to integer (0 decimals) and show as ,00
-function formatNumber(value, decimals = 0) {
-  if (value === null || value === undefined || isNaN(value)) return '0,00';
-  const num = Math.round(parseFloat(value)); // Round to nearest integer
-  if (isNaN(num)) return '0,00';
-  
-  // Add thousand separators (dots) to integer part
-  const formattedInteger = num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  
-  // Always return with ,00 for consistency
-  return `${formattedInteger},00`;
-}
-
-// Format currency with $ symbol
-// Always round to integer (0 decimals) and show as ,00
-function formatCurrency(value, decimals = 0) {
-  return `$${formatNumber(value, decimals)}`;
-}
-
 // Helper functions to generate formula tooltips for payroll calculations
 function getDaysAccumulatedFormula(summary, currentYear) {
   return `Días acumulados para ${currentYear}:\n` +
     `- Basado en años de servicio hasta fin de ${currentYear - 1}\n` +
     `- Fórmula: 20 días base + Math.floor((años trabajados - 1) / 4)\n` +
     `- Si trabajó año completo: cálculo por años\n` +
-    `- Si trabajó parcial: Math.floor(meses trabajados × 1.66)`;
+    `- Si trabajó parcial: cálculo proporcional por días trabajados (1.66/30 por día), redondeo hacia arriba`;
 }
 
 function getDaysRemainingFormula(summary, currentYear) {
@@ -206,6 +174,8 @@ async function loadAllData() {
       logger.debug('Starting loadAllData');
     }
     
+    // Get nrd instance dynamically
+    const nrd = window.nrd;
     if (!nrd) {
       throw new Error('NRD service not available');
     }
@@ -463,9 +433,14 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
                 
                 const monthsWorkedInRecordsYear = Math.max(0, monthsDiff);
                 
-                // Calculate days accumulated proportionally: 1.66 days per month
-                // This is ONLY for "Licencia No Gozada" calculation
-                daysAccumulatedForLicenseNotTaken = Math.floor(monthsWorkedInRecordsYear * 1.66);
+                // Calculate days accumulated proportionally by days worked
+                // Legal: 1.66 days per month = 0.0553 days per day (1.66/30)
+                // Calculate days worked from actualStart to actualEnd
+                const daysPerDay = 1.66 / 30; // 0.0553
+                const daysWorked = Math.floor((actualEnd - actualStart) / (1000 * 60 * 60 * 24)) + 1;
+                const totalDaysAccumulated = daysWorked * daysPerDay;
+                // Round up if there's a fraction
+                daysAccumulatedForLicenseNotTaken = Math.ceil(totalDaysAccumulated);
                 
                 console.log('Employee with endDate in recordsYear - calculate for license not taken', {
                   employeeId,
@@ -503,13 +478,13 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
           // Calculate months worked in displayYear
           // This is based ONLY on dates, not on salaries registered
           let monthsWorkedInYear = 0;
-          if (start <= yearEnd) {
+          if (start.getTime() <= yearEnd.getTime()) {
             // If employee started before or during the year, calculate months worked
-            const actualStart = start > yearStart ? start : yearStart;
+            const actualStart = start.getTime() > yearStart.getTime() ? start : yearStart;
             const actualEnd = yearEnd;
             
             // If employee started before the year, they worked the full year (12 months)
-            if (start < yearStart) {
+            if (start.getTime() < yearStart.getTime()) {
               monthsWorkedInYear = 12;
             } else {
               // Employee started during the year: calculate months from start to end of year
@@ -528,7 +503,7 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
           // CRITICAL: Check if employee started during displayYear
           // If employee started during displayYear, calculate days based on months worked
           // The months worked are calculated from startDate to end of year
-          if (start >= yearStart && start <= yearEnd) {
+          if (start.getTime() >= yearStart.getTime() && start.getTime() <= yearEnd.getTime()) {
             // Employee started during displayYear
             // Check if they worked the full year (12 months) based on date calculation only
             const workedFullYear = monthsWorkedInYear >= 12;
@@ -559,10 +534,46 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
                 monthsWorkedInYear,
                 startDate: employee.startDate
               });
-            } else if (monthsWorkedInYear > 0) {
-              // Employee didn't work the full year: calculate proportionally
-              // Legal: 1.66 days per month, use Math.floor()
-              daysAccumulated = Math.floor(monthsWorkedInYear * 1.66);
+            } else {
+              // Employee didn't work the full year: calculate proportionally by days worked
+              // Legal: 1.66 days per month = 0.0553 days per day (1.66/30)
+              // Recalculate actualStart and actualEnd for this specific case
+              const actualStart = start.getTime() > yearStart.getTime() ? start : yearStart;
+              const actualEnd = yearEnd;
+              const daysPerDay = 1.66 / 30; // 0.0553
+              const daysWorked = Math.floor((actualEnd - actualStart) / (1000 * 60 * 60 * 24)) + 1;
+              
+              console.log('Employee started during displayYear - calculating proportionally', {
+                employeeId,
+                displayYear,
+                startDate: employee.startDate,
+                actualStart: actualStart.toISOString(),
+                actualEnd: actualEnd.toISOString(),
+                daysWorked,
+                daysPerDay
+              });
+              
+              // Only calculate if there are days worked
+              if (daysWorked > 0) {
+                const totalDaysAccumulated = daysWorked * daysPerDay;
+                // Round up if there's a fraction
+                daysAccumulated = Math.ceil(totalDaysAccumulated);
+                console.log('Calculated days accumulated', {
+                  employeeId,
+                  displayYear,
+                  totalDaysAccumulated,
+                  daysAccumulated
+                });
+              } else {
+                daysAccumulated = 0;
+                console.warn('daysWorked is 0 or negative', {
+                  employeeId,
+                  displayYear,
+                  actualStart: actualStart.toISOString(),
+                  actualEnd: actualEnd.toISOString(),
+                  daysWorked
+                });
+              }
               console.log('Employee started during displayYear - proportional calculation', {
                 employeeId,
                 displayYear,
@@ -571,13 +582,6 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
                 startDate: employee.startDate,
                 yearStart: yearStart.toISOString(),
                 yearEnd: yearEnd.toISOString()
-              });
-            } else {
-              daysAccumulated = 0;
-              console.log('Employee started during displayYear but monthsWorkedInYear is 0', {
-                employeeId,
-                displayYear,
-                startDate: employee.startDate
               });
             }
           } else {
@@ -626,26 +630,29 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
                 startDate: employee.startDate,
                 startBeforeYear: start < yearStart
               });
-            } else if (monthsWorkedInYear > 0) {
-              // Employee didn't work the full year: calculate proportionally
-              // Legal: 1.66 days per month, use Math.floor() NOT Math.ceil()
-              // This applies when employee already has years worked but didn't complete the full displayYear
-              daysAccumulated = Math.floor(monthsWorkedInYear * 1.66);
+            } else {
+              // Employee didn't work the full year: calculate proportionally by days worked
+              // Legal: 1.66 days per month = 0.0553 days per day (1.66/30)
+              const actualStart = start > yearStart ? start : yearStart;
+              const actualEnd = yearEnd;
+              const daysPerDay = 1.66 / 30; // 0.0553
+              const daysWorked = Math.floor((actualEnd - actualStart) / (1000 * 60 * 60 * 24)) + 1;
+              
+              // Only calculate if there are days worked
+              if (daysWorked > 0) {
+                const totalDaysAccumulated = daysWorked * daysPerDay;
+                // Round up if there's a fraction
+                daysAccumulated = Math.ceil(totalDaysAccumulated);
+              } else {
+                // Employee didn't work during displayYear
+                daysAccumulated = 0;
+              }
               
               console.log('Employee started before displayYear but worked partial year - proportional calculation', {
                 employeeId,
                 displayYear,
                 monthsWorkedInYear,
                 daysAccumulated,
-                startDate: employee.startDate
-              });
-            } else {
-              // Employee didn't work during displayYear
-              daysAccumulated = 0;
-              
-              console.log('Employee started before displayYear but didn\'t work during displayYear', {
-                employeeId,
-                displayYear,
                 startDate: employee.startDate
               });
             }
@@ -661,13 +668,15 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
           }
         } else {
           // Fallback to old calculation if no start date
-      // Legal: Use proportional calculation: 1.66 days per month, use Math.floor()
-      // Use months worked in displayYear
+      // Legal: Use proportional calculation: 1.66 days per month
+      // Use months worked in displayYear (fallback - estimate as full months)
       const displayYearSalaries = Object.values(salariesData).filter(s => 
         s.employeeId === employeeId && s.year === displayYear
       );
       const monthsWorkedFallback = displayYearSalaries.length;
-      daysAccumulated = Math.floor(monthsWorkedFallback * 1.66);
+      const totalDaysAccumulated = monthsWorkedFallback * 1.66;
+      // Round up if there's a fraction
+      daysAccumulated = Math.ceil(totalDaysAccumulated);
       
       console.log('Days accumulated (fallback - no start date)', {
         employeeId,
@@ -688,7 +697,9 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
       s.employeeId === employeeId && s.year === displayYear
     );
     const monthsWorkedFallback = displayYearSalaries.length;
-    daysAccumulated = Math.floor(monthsWorkedFallback * 1.66);
+    const totalDaysAccumulated = monthsWorkedFallback * 1.66;
+    // Round up if there's a fraction
+    daysAccumulated = Math.ceil(totalDaysAccumulated);
     
     console.log('Days accumulated (fallback - error)', {
       employeeId,
@@ -752,15 +763,29 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
         
         yearsWorkedForCurrentYear = Math.max(1, yearsWorkedForCurrentYear);
         daysAccumulatedCurrentYear = 20 + Math.floor((yearsWorkedForCurrentYear - 1) / 4);
-      } else if (monthsWorkedCurrentYear > 0) {
-        daysAccumulatedCurrentYear = Math.floor(monthsWorkedCurrentYear * 1.66);
+      } else {
+        // Calculate proportionally by days worked (even if monthsWorkedCurrentYear is 0)
+        const actualStart = start > currentYearStart ? start : currentYearStart;
+        const actualEnd = currentYearEnd;
+        const daysPerDay = 1.66 / 30; // 0.0553
+        const daysWorked = Math.floor((actualEnd - actualStart) / (1000 * 60 * 60 * 24)) + 1;
+        
+        if (daysWorked > 0) {
+          const totalDaysAccumulated = daysWorked * daysPerDay;
+          // Round up if there's a fraction
+          daysAccumulatedCurrentYear = Math.ceil(totalDaysAccumulated);
+        } else {
+          daysAccumulatedCurrentYear = 0;
+        }
       }
     } else {
       // Fallback: use salaries from current year
       const currentYearSalaries = Object.values(salariesData).filter(s => 
         s.employeeId === employeeId && s.year === recordsYearForCalculation
       );
-      daysAccumulatedCurrentYear = Math.floor(currentYearSalaries.length * 1.66);
+      const totalDaysAccumulated = currentYearSalaries.length * 1.66;
+      // Round up if there's a fraction
+      daysAccumulatedCurrentYear = Math.ceil(totalDaysAccumulated);
     }
   } catch (error) {
     // Fallback: use salaries from current year
@@ -768,6 +793,65 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
       s.employeeId === employeeId && s.year === recordsYearForCalculation
     );
     daysAccumulatedCurrentYear = Math.floor(currentYearSalaries.length * 1.66);
+  }
+  
+  // Calculate days generated for current year (informative only, not used for salary calculations)
+  // This shows days accumulated from start of current year until today
+  let daysGeneratedCurrentYear = 0;
+  try {
+    if (employee && employee.startDate) {
+      const start = new Date(employee.startDate);
+      const currentYearStart = new Date(recordsYearForCalculation, 0, 1); // January 1 of current year
+      const today = new Date(); // Today's date
+      const currentYearEnd = new Date(recordsYearForCalculation, 11, 31); // December 31 of current year
+      
+      // Use today if we're in the current year, otherwise use end of year
+      const calculationEnd = today.getFullYear() === recordsYearForCalculation && today <= currentYearEnd
+        ? today
+        : currentYearEnd;
+      
+      // Check if employee started before or during current year
+      if (start.getTime() <= calculationEnd.getTime()) {
+        const actualStart = start.getTime() > currentYearStart.getTime() ? start : currentYearStart;
+        const actualEnd = calculationEnd;
+        
+        // Check if employee worked full year (from start of year to end of year)
+        const workedFullYear = start.getTime() < currentYearStart.getTime() && calculationEnd.getTime() >= currentYearEnd.getTime();
+        
+        if (workedFullYear) {
+          // Employee worked the full year: calculate based on years of service
+          const calculationEndDate = new Date(recordsYearForCalculation, 11, 31);
+          let yearsWorked = calculationEndDate.getFullYear() - start.getFullYear();
+          const monthDiff = calculationEndDate.getMonth() - start.getMonth();
+          const dayDiff = calculationEndDate.getDate() - start.getDate();
+          
+          if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+            yearsWorked--;
+          }
+          
+          yearsWorked = Math.max(0, yearsWorked);
+          
+          // Calculate days per year based on years of service
+          // Formula: 20 + Math.floor((yearsWorked - 1) / 4)
+          daysGeneratedCurrentYear = yearsWorked > 0 ? 20 + Math.floor((yearsWorked - 1) / 4) : 0;
+        } else {
+          // Employee didn't work the full year: calculate proportionally by days worked
+          const daysPerDay = 1.66 / 30; // 0.0553
+          const daysWorked = Math.floor((actualEnd - actualStart) / (1000 * 60 * 60 * 24)) + 1;
+          
+          if (daysWorked > 0) {
+            const totalDaysAccumulated = daysWorked * daysPerDay;
+            // Round up if there's a fraction
+            daysGeneratedCurrentYear = Math.ceil(totalDaysAccumulated);
+          } else {
+            daysGeneratedCurrentYear = 0;
+          }
+        }
+      }
+    }
+  } catch (error) {
+    logger.warn('Error calculating days generated for current year', { employeeId, error });
+    daysGeneratedCurrentYear = 0;
   }
   
   // Calculate daily wage for vacation salary and license not taken
@@ -936,6 +1020,7 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
     daysTaken: Math.round(daysTakenDisplayYear), // Days taken only from displayYear (legal: imputa al año que se genera), rounded to integer
     daysTakenCurrentYear: Math.round(daysTakenRecordsYear), // Days taken from recordsYearForCalculation for display, rounded to integer
     daysRemaining: Math.round(displayedDaysRemaining), // Round to integer - same as "Saldo Días de Licencia"
+    daysGeneratedCurrentYear: Math.round(daysGeneratedCurrentYear), // Days generated for current year (informative)
     vacationSalary: Math.round(vacationSalary), // Round to integer
     licenseNotTakenSalary: Math.round(licenseNotTakenSalary), // Round to integer
     firstSemesterAguinaldo: Math.round(firstSemesterAguinaldo),
@@ -993,6 +1078,8 @@ async function loadPayrollItems() {
   // Clear content but don't show loading message - data will appear when ready
   payrollContent.innerHTML = '';
 
+  // Get nrd instance dynamically
+  const nrd = window.nrd;
   if (!nrd || !nrd.employees) {
     payrollContent.innerHTML = '<p class="text-gray-500 text-sm">Servicio no disponible</p>';
     return;
@@ -1024,9 +1111,10 @@ async function loadPayrollItems() {
     }
 
     // Load roles to filter out employees with "socio" role (needed for filter dropdown)
+    // nrd is already available from loadPayrollItems function scope
     let rolesData = {};
     try {
-      if (nrd.roles) {
+      if (nrd && nrd.roles) {
         const roles = await nrd.roles.getAll();
         if (Array.isArray(roles)) {
           roles.forEach(role => {
@@ -1290,8 +1378,8 @@ async function loadPayrollItems() {
       
       // Add special styling if has pending items
       const cardClass = hasPending 
-        ? 'border-4 border-orange-500 p-4 bg-white cursor-pointer hover:border-orange-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 relative' 
-        : 'border-2 border-gray-200 p-4 bg-white cursor-pointer hover:border-red-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200';
+        ? 'border-4 border-red-500 p-4 bg-white cursor-pointer hover:border-red-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 relative' 
+        : 'border-2 border-gray-200 p-4 bg-white cursor-pointer hover:border-green-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200';
       
       const card = document.createElement('div');
       card.className = cardClass;
@@ -1300,14 +1388,9 @@ async function loadPayrollItems() {
       // displayYear is already declared above (line 1084)
       
       card.innerHTML = `
-        ${hasPending ? `
-          <div class="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow-md z-10">
-            Pendiente
-          </div>
-        ` : ''}
-        <div class="-m-4 mb-3 px-4 py-3 bg-red-600 text-white shadow-md ${hasPending ? 'bg-orange-600' : ''}">
+        <div class="-m-4 mb-3 px-4 py-3 ${hasPending ? 'bg-red-600' : 'bg-green-600'} text-white shadow-md">
           <h3 class="text-lg font-semibold tracking-tight">${escapeHtml(employee.name)}</h3>
-          <p class="text-sm ${hasPending ? 'text-orange-100' : 'text-red-100'} mt-0.5">${currentYear}</p>
+          <p class="text-sm ${hasPending ? 'text-red-100' : 'text-green-100'} mt-0.5">${currentYear}</p>
         </div>
         
         <div class="space-y-2.5 text-sm px-1">
@@ -1320,6 +1403,10 @@ async function loadPayrollItems() {
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">Días generados ${displayYear}:</span>
                 <span class="font-semibold text-green-600 text-right">${formatNumber(summary.daysAccumulated || 0)}</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-500 italic">Días generados ${recordsYear}:</span>
+                <span class="text-gray-500 italic text-right">${formatNumber(summary.daysGeneratedCurrentYear || 0)}</span>
               </div>
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">Días gozados:</span>
@@ -1388,6 +1475,13 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
   
   const employee = employeesData[employeeId];
   if (!employee) return;
+  
+  // Get nrd instance dynamically
+  const nrd = window.nrd;
+  if (!nrd) {
+    await showError('Servicio no disponible');
+    return;
+  }
   
   // Recalculate payroll items for the current year before showing summary
   // This ensures the summary boxes show correct calculated values
@@ -1520,12 +1614,7 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
   // Replace content with employee details page
   payrollContent.innerHTML = `
     <div class="bg-white border border-gray-200 shadow-sm">
-      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 ${hasPending ? 'bg-orange-600' : 'bg-red-600'} relative">
-        ${hasPending ? `
-          <div class="absolute top-2 right-2 bg-orange-500 text-white text-xs font-bold px-2 py-1 rounded-full shadow-md z-10">
-            Pendiente
-          </div>
-        ` : ''}
+      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 ${hasPending ? 'bg-red-600' : 'bg-green-600'} relative">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-4">
             <button id="back-to-employees-btn" class="flex items-center gap-2 px-3 py-1.5 text-sm bg-white/20 hover:bg-white/30 text-white rounded transition-colors">
@@ -1577,6 +1666,10 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">Días generados ${displayYear}:</span>
                 <span class="font-medium text-green-600 sm:text-right">${formatNumber(summary.daysAccumulated || 0)}</span>
+              </div>
+              <div class="flex justify-between items-center text-xs">
+                <span class="text-gray-500 italic">Días generados ${recordsYear}:</span>
+                <span class="text-gray-500 italic sm:text-right">${formatNumber(summary.daysGeneratedCurrentYear || 0)}</span>
               </div>
               <div class="flex justify-between items-center text-xs">
                 <span class="text-gray-600">Días gozados:</span>
@@ -1991,6 +2084,11 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       showSpinner('Eliminando salario...');
       
       try {
+        const nrd = window.nrd;
+        if (!nrd) {
+          await showError('Servicio no disponible');
+          return;
+        }
         await nrd.salaries.delete(salaryId);
         
         // Recalculate payroll items
@@ -2036,6 +2134,11 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
       showSpinner('Eliminando licencia...');
       
       try {
+        const nrd = window.nrd;
+        if (!nrd) {
+          await showError('Servicio no disponible');
+          return;
+        }
         await nrd.licenses.delete(licenseId);
         
         // Recalculate payroll items
@@ -2346,6 +2449,13 @@ async function showSalaryForm(salaryId = null, employeeId = null) {
     });
   }
 
+  // Get nrd instance dynamically
+  const nrd = window.nrd;
+  if (!nrd) {
+    await showError('Servicio no disponible');
+    return;
+  }
+  
   // Load salary data if editing
   if (salaryId) {
     try {
@@ -2456,6 +2566,13 @@ async function showSalaryForm(salaryId = null, employeeId = null) {
         salaryData.extras = extras;
       }
 
+      // Get nrd instance dynamically
+      const nrd = window.nrd;
+      if (!nrd) {
+        await showError('Servicio no disponible');
+        return;
+      }
+      
       if (salaryId) {
         await nrd.salaries.update(salaryId, salaryData);
       } else {
@@ -2691,6 +2808,13 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
     daysTakenInput.addEventListener('input', updateVacationSalaryEstimate);
   }
 
+  // Get nrd instance dynamically
+  const nrd = window.nrd;
+  if (!nrd) {
+    await showError('Servicio no disponible');
+    return;
+  }
+  
   // Load license data if editing
   if (licenseId) {
     try {
@@ -2766,6 +2890,13 @@ async function showLicenseForm(licenseId = null, employeeId = null) {
         licenseData.notes = notes;
       }
 
+      // Get nrd instance dynamically
+      const nrd = window.nrd;
+      if (!nrd) {
+        await showError('Servicio no disponible');
+        return;
+      }
+      
       if (licenseId) {
         await nrd.licenses.update(licenseId, licenseData);
       } else {
@@ -3118,6 +3249,13 @@ async function showAguinaldoPaymentForm(employeeId, year) {
         updatedAt: Date.now()
       };
 
+      // Get nrd instance dynamically
+      const nrd = window.nrd;
+      if (!nrd) {
+        await showError('Servicio no disponible');
+        return;
+      }
+      
       // Use existing record if editing, otherwise create new
       if (selectedRecordId) {
         const existingRecord = Object.values(aguinaldoData).find(a => a.id === selectedRecordId);
@@ -3171,6 +3309,13 @@ async function showAguinaldoPaymentForm(employeeId, year) {
 // Initialize payroll items tab
 // Recalculate payroll items for a specific year
 async function recalculateForYear(year) {
+  // Get nrd instance dynamically
+  const nrd = window.nrd;
+  if (!nrd) {
+    logger.error('NRD service not available for recalculation');
+    return;
+  }
+  
   if (typeof window.recalculatePayrollItems !== 'function') {
     logger.debug('recalculatePayrollItems function not available');
     return;
@@ -3209,6 +3354,7 @@ async function recalculateForYear(year) {
               await window.recalculatePayrollItems(employeeId, year);
               
               // Reload data after recalculation (with timeout to prevent hanging)
+              // nrd is already available from recalculateForYear function scope
               try {
                 const [updatedVacations, updatedAguinaldos] = await Promise.all([
                   nrd.vacations.queryByChild('employeeId', employeeId).catch(() => []),
@@ -3294,8 +3440,11 @@ async function initializePayrollItems() {
   }
 }
 
-// Expose functions to global scope
-window.initializePayrollItems = initializePayrollItems;
-window.loadPayrollItems = loadPayrollItems;
+// Export functions
+export { initializePayrollItems, loadPayrollItems };
 
-})(); // End of IIFE
+// Maintain compatibility with existing code
+if (typeof window !== 'undefined') {
+  window.initializePayrollItems = initializePayrollItems;
+  window.loadPayrollItems = loadPayrollItems;
+}

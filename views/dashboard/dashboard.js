@@ -1,55 +1,75 @@
-// Dashboard with summary totals
-(function() {
-'use strict';
+// Dashboard with summary totals (ES Module)
+// Using NRDCommon from CDN (loaded in index.html)
+const logger = window.logger || console;
+const formatNumber = window.formatNumber || ((v) => String(v));
+const formatCurrency = window.formatCurrency || ((v) => '$' + String(v));
+const showSpinner = window.showSpinner || (() => {});
+const hideSpinner = window.hideSpinner || (() => {});
 
-// Get nrd instance safely
-var nrd = window.nrd;
-
-// Format number with comma for decimals and dot for thousands
-// Always round to integer (0 decimals) and show as ,00
-function formatNumber(value, decimals = 0) {
-  if (value === null || value === undefined || isNaN(value)) return '0,00';
-  const num = Math.round(parseFloat(value)); // Round to nearest integer
-  if (isNaN(num)) return '0,00';
-  
-  // Add thousand separators (dots) to integer part
-  const formattedInteger = num.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.');
-  
-  // Always return with ,00 for consistency
-  return `${formattedInteger},00`;
-}
-
-// Format currency with $ symbol
-// Always round to integer (0 decimals) and show as ,00
-function formatCurrency(value, decimals = 0) {
-  return `$${formatNumber(value, decimals)}`;
-}
+// Get nrd instance dynamically (initialized in index.html)
+// Don't cache it at module level as it may not be available yet
 
 let dashboardListener = null;
 let currentYear = new Date().getFullYear();
 
 // Load dashboard data
-async function loadDashboard() {
+export async function loadDashboard() {
   const dashboardContent = document.getElementById('dashboard-content');
-  if (!dashboardContent) return;
+  if (!dashboardContent) {
+    logger.warn('Dashboard content element not found');
+    return;
+  }
   
   dashboardContent.innerHTML = '<p class="text-gray-500 text-sm">Cargando dashboard...</p>';
 
+  // Get nrd instance dynamically
+  const nrd = window.nrd;
   if (!nrd) {
+    logger.error('NRD Data Access not available');
     dashboardContent.innerHTML = '<p class="text-gray-500 text-sm">Servicio no disponible</p>';
     return;
   }
 
   try {
-    // Load all data
+    logger.debug('Loading dashboard data...');
+    
+    // Load all data using NRD Data Access
+    // Handle services that might not exist gracefully
     const [employees, salaries, licenses, vacations, aguinaldos, roles] = await Promise.all([
-      nrd.employees.getAll(),
-      nrd.salaries.getAll(),
-      nrd.licenses.getAll(),
-      nrd.vacations.getAll(),
-      nrd.aguinaldo.getAll(),
-      nrd.roles.getAll().catch(() => [])
+      nrd.employees.getAll().catch((err) => {
+        logger.warn('Error loading employees', err);
+        return [];
+      }),
+      nrd.salaries.getAll().catch((err) => {
+        logger.warn('Error loading salaries', err);
+        return [];
+      }),
+      (nrd.licenses ? nrd.licenses.getAll().catch((err) => {
+        logger.debug('Licenses service not available or error', err);
+        return [];
+      }) : Promise.resolve([])),
+      (nrd.vacations ? nrd.vacations.getAll().catch((err) => {
+        logger.debug('Vacations service not available or error', err);
+        return [];
+      }) : Promise.resolve([])),
+      (nrd.aguinaldo ? nrd.aguinaldo.getAll().catch((err) => {
+        logger.debug('Aguinaldo service not available or error', err);
+        return [];
+      }) : Promise.resolve([])),
+      (nrd.roles ? nrd.roles.getAll().catch((err) => {
+        logger.debug('Roles service not available or error', err);
+        return [];
+      }) : Promise.resolve([]))
     ]);
+    
+    logger.debug('Dashboard data loaded', {
+      employees: employees?.length || 0,
+      salaries: salaries?.length || 0,
+      licenses: licenses?.length || 0,
+      vacations: vacations?.length || 0,
+      aguinaldos: aguinaldos?.length || 0,
+      roles: roles?.length || 0
+    });
 
     // Convert to arrays if needed
     let employeesArray = Array.isArray(employees) ? employees : Object.values(employees || {});
@@ -69,6 +89,15 @@ async function loadDashboard() {
       employeesArray = employeesArray.filter(employee => {
         const roleIds = employee.roleIds || (employee.roleId ? [employee.roleId] : []);
         return !roleIds.includes(socioRoleId);
+      });
+    }
+    
+    // Filter out employees that were not active in the current year (based on endDate)
+    // This ensures employees with endDate in previous years don't appear in current/future years
+    const isEmployeeActiveInYearFn = window.isEmployeeActiveInYear;
+    if (isEmployeeActiveInYearFn) {
+      employeesArray = employeesArray.filter(employee => {
+        return isEmployeeActiveInYearFn(employee, currentYear);
       });
     }
     
@@ -94,9 +123,9 @@ async function loadDashboard() {
     const totalSalaries = yearSalaries.length;
     const totalEmployeesWithSalaries = new Set(yearSalaries.map(s => s.employeeId)).size;
     
-    // Calculate total salary amounts
-    const totalBaseSalary = yearSalaries.reduce((sum, s) => sum + (s.baseSalary30Days || 0), 0);
-    const totalExtras = yearSalaries.reduce((sum, s) => sum + (s.extras || 0), 0);
+    // Calculate total salary amounts (round to avoid floating point precision issues)
+    const totalBaseSalary = Math.round(yearSalaries.reduce((sum, s) => sum + (s.baseSalary30Days || 0), 0));
+    const totalExtras = Math.round(yearSalaries.reduce((sum, s) => sum + (s.extras || 0), 0));
     const totalMonthlySalary = totalBaseSalary + totalExtras;
     
     // Get employees with salaries to filter licenses
@@ -452,7 +481,7 @@ async function loadDashboard() {
     
     // Card 1: Total Employees
     const card1 = document.createElement('div');
-    card1.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card1.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card1.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Total Empleados</h3>
@@ -469,7 +498,7 @@ async function loadDashboard() {
 
     // Card 2: Employees with Salaries
     const card2 = document.createElement('div');
-    card2.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card2.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card2.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Con Salarios</h3>
@@ -486,7 +515,7 @@ async function loadDashboard() {
 
     // Card 3: Total Salaries
     const card3 = document.createElement('div');
-    card3.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card3.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card3.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Registros de Salario</h3>
@@ -503,7 +532,7 @@ async function loadDashboard() {
 
     // Card 4: Total Monthly Salary
     const card4 = document.createElement('div');
-    card4.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card4.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card4.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Total Salarios Mensuales</h3>
@@ -520,7 +549,7 @@ async function loadDashboard() {
 
     // Card 5: Total Vacation Salary (Unpaid)
     const card5 = document.createElement('div');
-    card5.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card5.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card5.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Salario Vacacional Pendiente</h3>
@@ -539,7 +568,7 @@ async function loadDashboard() {
 
     // Card 6: Total Aguinaldo (Unpaid)
     const card6 = document.createElement('div');
-    card6.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card6.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card6.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Aguinaldo Pendiente</h3>
@@ -578,7 +607,7 @@ async function loadDashboard() {
 
     // Card 7: Total Payroll Cost
     const card7 = document.createElement('div');
-    card7.className = 'bg-red-50 border-2 border-red-200 rounded-lg p-4 sm:p-6';
+    card7.className = 'bg-red-50 border-2 border-red-200 p-4 sm:p-6';
     card7.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-red-800 uppercase tracking-wider">Costo Total de Nómina</h3>
@@ -595,7 +624,7 @@ async function loadDashboard() {
 
     // Card 8: Vacation Days Summary
     const card8 = document.createElement('div');
-    card8.className = 'bg-white border border-gray-200 rounded-lg p-4 sm:p-6';
+    card8.className = 'bg-white border border-gray-200 p-4 sm:p-6';
     card8.innerHTML = `
       <div class="flex items-center justify-between mb-2">
         <h3 class="text-sm font-light text-gray-600 uppercase tracking-wider">Días de Licencia</h3>
@@ -625,7 +654,7 @@ async function loadDashboard() {
     // Card 9: License Not Taken (for terminated employees)
     if (totalLicenseNotTaken > 0) {
       const card9 = document.createElement('div');
-      card9.className = 'bg-green-50 border border-green-200 rounded-lg p-4 sm:p-6';
+      card9.className = 'bg-green-50 border border-green-200 p-4 sm:p-6';
       card9.innerHTML = `
         <div class="flex items-center justify-between mb-2">
           <h3 class="text-sm font-light text-green-800 uppercase tracking-wider">Licencia No Gozada</h3>
@@ -645,17 +674,30 @@ async function loadDashboard() {
 
   } catch (error) {
     logger.error('Error loading dashboard', error);
-    dashboardContent.innerHTML = '<p class="text-red-500 text-sm">Error al cargar el dashboard</p>';
+    const errorMessage = error.message || 'Error desconocido';
+    const errorStack = error.stack || '';
+    logger.error('Dashboard error details', { errorMessage, errorStack });
+    
+    dashboardContent.innerHTML = `
+      <div class="bg-red-50 border border-red-200 p-4">
+        <p class="text-red-600 font-medium mb-2">Error al cargar el dashboard</p>
+        <p class="text-red-500 text-sm mb-2">${errorMessage}</p>
+        <p class="text-xs text-gray-500 mb-4">Revisa la consola para más detalles</p>
+        <button onclick="window.loadDashboard()" class="px-4 py-2 bg-red-600 text-white hover:bg-red-700 text-sm">
+          Reintentar
+        </button>
+      </div>
+    `;
   }
 }
 
 // Initialize dashboard
-function initializeDashboard() {
+export function initializeDashboard() {
   loadDashboard();
 }
 
-// Expose functions to global scope
-window.initializeDashboard = initializeDashboard;
-window.loadDashboard = loadDashboard;
-
-})(); // End of IIFE
+// Maintain compatibility with existing code
+if (typeof window !== 'undefined') {
+  window.initializeDashboard = initializeDashboard;
+  window.loadDashboard = loadDashboard;
+}

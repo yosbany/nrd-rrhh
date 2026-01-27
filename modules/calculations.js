@@ -1,11 +1,14 @@
-// Payroll calculation utilities
+// Payroll calculation utilities (ES Module)
 // This module contains functions to automatically calculate:
 // - Unused vacation days (licencia no gozada)
 // - Vacation salary (salario vacacional)
 // - Aguinaldo (Christmas bonus)
 
-// Get nrd instance safely
-var nrd = window.nrd;
+// Using NRDCommon from CDN (loaded in index.html)
+const logger = window.logger || console;
+
+// Get nrd instance (initialized in index.html)
+const nrd = window.nrd;
 
 // Helper to safely get service
 function getService(serviceName) {
@@ -134,8 +137,12 @@ async function calculateUnusedVacationDays(employeeId, year) {
       }
       
       // Use proportional calculation: 1.66 days per month
-      // Legal: Use Math.floor() or Math.round(), NOT Math.ceil()
-      const daysAccumulated = Math.floor(monthsWorked * VACATION_DAYS_PER_MONTH_PROPORTIONAL);
+      // Calculate by days worked, then round up if fraction
+      const daysPerDay = VACATION_DAYS_PER_MONTH_PROPORTIONAL / 30; // 1.66 / 30 = 0.0553
+      // Estimate: assume monthsWorked represents full months (fallback calculation)
+      const totalDaysAccumulated = monthsWorked * VACATION_DAYS_PER_MONTH_PROPORTIONAL;
+      // Round up if there's a fraction
+      const daysAccumulated = Math.ceil(totalDaysAccumulated);
       const daysRemaining = Math.max(0, daysAccumulated - daysTaken);
       
       return {
@@ -174,13 +181,60 @@ async function calculateUnusedVacationDays(employeeId, year) {
     // Check if employee worked the full year (12 months)
     const workedFullYear = monthsWorkedInYear >= 12;
     
+    // Check if employee started during this year (not before)
+    const startedDuringYear = start >= yearStart && start <= yearEnd;
+    
+    // Also check if employee worked any days in this year (even if monthsWorkedInYear is 0 due to calculation issues)
+    const actualStart = start > yearStart ? start : yearStart;
+    const actualEnd = yearEnd;
+    const daysWorkedInYear = start <= yearEnd ? Math.floor((actualEnd - actualStart) / (1000 * 60 * 60 * 24)) + 1 : 0;
+    
     let daysAccumulated = 0;
     
-    if (!workedFullYear && monthsWorkedInYear > 0) {
-      // Employee didn't work the full year: calculate proportionally
-      // Legal: 1.66 days per month, use Math.floor() NOT Math.ceil()
-      daysAccumulated = Math.floor(monthsWorkedInYear * VACATION_DAYS_PER_MONTH_PROPORTIONAL);
-    } else {
+    // If employee started during the year OR didn't work full year, calculate proportionally
+    // Also handle case where monthsWorkedInYear might be 0 but employee actually worked days
+    if (startedDuringYear || (!workedFullYear && (monthsWorkedInYear > 0 || daysWorkedInYear > 0))) {
+      // Employee started during the year or didn't work the full year: calculate proportionally by days worked
+      // Legal: 1.66 days per month = 0.0553 days per day (1.66/30)
+      
+      let totalDaysAccumulated = 0;
+      const daysPerDay = VACATION_DAYS_PER_MONTH_PROPORTIONAL / 30; // 1.66 / 30 = 0.0553
+      
+      // Use the calculated daysWorkedInYear
+      const totalDaysWorked = daysWorkedInYear;
+      
+      // Only calculate if there are days worked
+      if (totalDaysWorked > 0) {
+        // Calculate accumulated days: days worked * days per day
+        totalDaysAccumulated = totalDaysWorked * daysPerDay;
+        
+        // Round up if there's a fraction (if decimal part > 0, round up)
+        daysAccumulated = Math.ceil(totalDaysAccumulated);
+        
+        logger.debug('Calculated proportional vacation days', {
+          employeeId,
+          year,
+          startDate: startDate,
+          startedDuringYear,
+          monthsWorkedInYear,
+          daysWorkedInYear: totalDaysWorked,
+          daysPerDay,
+          totalDaysAccumulated,
+          daysAccumulated
+        });
+      } else {
+        logger.warn('Employee started during year but daysWorkedInYear is 0', {
+          employeeId,
+          year,
+          startDate: startDate,
+          start: start.toISOString(),
+          yearStart: yearStart.toISOString(),
+          yearEnd: yearEnd.toISOString(),
+          actualStart: actualStart.toISOString(),
+          actualEnd: actualEnd.toISOString()
+        });
+      }
+    } else if (workedFullYear) {
       // Employee worked the full year: calculate based on years of service
       // Calculate complete years worked up to the end of the PREVIOUS year
       // For year 2026, calculate years worked until Dec 31, 2025
@@ -200,7 +254,29 @@ async function calculateUnusedVacationDays(employeeId, year) {
       // Calculate days per year based on years of service
       const daysPerYear = calculateVacationDaysPerYear(yearsWorked);
       daysAccumulated = daysPerYear;
+      
+      logger.debug('Calculated full year vacation days', {
+        employeeId,
+        year,
+        startDate: startDate,
+        yearsWorked,
+        daysPerYear,
+        daysAccumulated
+      });
+    } else {
+      // Employee didn't work during this year at all
+      logger.debug('Employee did not work during this year', {
+        employeeId,
+        year,
+        startDate: startDate,
+        start: start.toISOString(),
+        yearStart: yearStart.toISOString(),
+        yearEnd: yearEnd.toISOString(),
+        monthsWorkedInYear,
+        daysWorkedInYear
+      });
     }
+    // If neither condition is met, daysAccumulated remains 0
     
     // Get licenses (days taken) for the employee in THIS YEAR ONLY
     // Legal rule: Licencia se imputa al año en que se genera
@@ -1028,13 +1104,30 @@ async function recalculateAllPayrollItems(year) {
   }
 }
 
-// Expose functions to global scope
-window.recalculatePayrollItems = recalculatePayrollItems;
-window.recalculateAllPayrollItems = recalculateAllPayrollItems;
-window.calculateVacationSalary = calculateVacationSalary;
-window.calculateLicenseNotTaken = calculateLicenseNotTaken;
-window.calculateAguinaldo = calculateAguinaldo;
-window.updateVacationSalary = updateVacationSalary;
-window.updateLicenseNotTaken = updateLicenseNotTaken;
-window.updateAguinaldo = updateAguinaldo;
+// Export functions
+export { 
+  recalculatePayrollItems,
+  recalculateAllPayrollItems,
+  calculateVacationSalary,
+  calculateLicenseNotTaken,
+  calculateAguinaldo,
+  updateVacationSalary,
+  updateLicenseNotTaken,
+  updateAguinaldo,
+  calculateVacationDaysPerYear,
+  calculateUnusedVacationDays,
+  calculateAverageMonthlySalary
+};
+
+// Maintain compatibility with existing code
+if (typeof window !== 'undefined') {
+  window.recalculatePayrollItems = recalculatePayrollItems;
+  window.recalculateAllPayrollItems = recalculateAllPayrollItems;
+  window.calculateVacationSalary = calculateVacationSalary;
+  window.calculateLicenseNotTaken = calculateLicenseNotTaken;
+  window.calculateAguinaldo = calculateAguinaldo;
+  window.updateVacationSalary = updateVacationSalary;
+  window.updateLicenseNotTaken = updateLicenseNotTaken;
+  window.updateAguinaldo = updateAguinaldo;
+}
 window.calculateUnusedVacationDays = calculateUnusedVacationDays;
