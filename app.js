@@ -4,6 +4,7 @@ const logger = window.logger || console;
 
 import { initializeDashboard } from './views/dashboard/dashboard.js';
 import { initializePayrollItems } from './views/payroll-items/payroll-items.js';
+import { initializeMonthlyPayroll } from './views/monthly-payroll/monthly-payroll.js';
 
 // Setup navigation buttons
 function setupNavigationButtons() {
@@ -18,6 +19,7 @@ function setupNavigationButtons() {
   navContainer.innerHTML = `
     <button class="nav-btn flex-1 px-3 sm:px-4 py-3 sm:py-3.5 border-b-2 border-red-600 text-red-600 bg-red-50 font-medium transition-colors uppercase tracking-wider text-xs sm:text-sm font-light" data-view="dashboard">Dashboard</button>
     <button class="nav-btn flex-1 px-3 sm:px-4 py-3 sm:py-3.5 border-b-2 border-transparent text-gray-600 hover:text-red-600 transition-colors uppercase tracking-wider text-xs sm:text-sm font-light" data-view="payroll-items">Partidas Salariales</button>
+    <button class="nav-btn flex-1 px-3 sm:px-4 py-3 sm:py-3.5 border-b-2 border-transparent text-gray-600 hover:text-red-600 transition-colors uppercase tracking-wider text-xs sm:text-sm font-light" data-view="monthly-payroll">Nómina Mensual</button>
   `;
 }
 
@@ -49,6 +51,12 @@ function createNavigationService() {
   navigationService.registerView('payroll-items', () => {
     if (typeof initializePayrollItems === 'function') {
       initializePayrollItems();
+    }
+  });
+
+  navigationService.registerView('monthly-payroll', () => {
+    if (typeof initializeMonthlyPayroll === 'function') {
+      initializeMonthlyPayroll();
     }
   });
   
