@@ -29,7 +29,7 @@
     // Ensure a global logger exists early so libraries can reference it safely
     window.logger = window.logger || console;
   </script>
-  <link rel="stylesheet" href="assets/styles/styles.css?v=1770650841906">
+  <link rel="stylesheet" href="assets/styles/styles.css?v=1770849422680">
   <meta name="theme-color" content="#dc2626">
   <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192.png">
   <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
@@ -201,7 +201,7 @@
                          window.location.hostname === '0.0.0.0';
       
       const nrdDataAccessSrc = isLocalhost 
-        ? '/nrd-data-access/dist/nrd-data-access.js?v=1770650841906'
+        ? '/nrd-data-access/dist/nrd-data-access.js?v=1770849422680'
         : 'https://cdn.jsdelivr.net/gh/yosbany/nrd-data-access@main/dist/nrd-data-access.js';
       
       console.log('Loading NRD Data Access from:', nrdDataAccessSrc);
@@ -227,7 +227,7 @@
                          window.location.hostname === '0.0.0.0';
       
       const nrdCommonSrc = isLocalhost 
-        ? '/nrd-common/dist/nrd-common.js?v=1770650841906'
+        ? '/nrd-common/dist/nrd-common.js?v=1770849422680'
         : 'https://cdn.jsdelivr.net/gh/yosbany/nrd-common@main/dist/nrd-common.js';
       
       console.log('Loading NRD Common from:', nrdCommonSrc);
@@ -373,7 +373,7 @@
 
   <!-- Main App (load last with defer) -->
   <!-- Note: AuthService and NavigationService are now loaded from NRDCommon CDN -->
-  <script type="module" src="app.js?v=1770650841906" defer></script>
+  <script type="module" src="app.js?v=1770849422680" defer></script>
 
   <!-- Application Initialization - Waits for all modules to load -->
   <script>
@@ -434,7 +434,7 @@
     // Register service worker with update check
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js?v=1770650841906')
+        navigator.serviceWorker.register('service-worker.js?v=1770849422680')
           .then(reg => {
             console.log('Service Worker registered');
             // Force update check
