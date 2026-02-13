@@ -79,6 +79,12 @@ def update_version(project_name=None):
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html)
     
+    # Write version.json so the client can validate against server (avoid stale cache)
+    import json
+    version_path = script_dir / 'version.json'
+    with open(version_path, 'w', encoding='utf-8') as f:
+        json.dump({'v': version}, f)
+    
     print(f"✅ {project_name}: Version updated to: {version}")
 
 if __name__ == "__main__":
