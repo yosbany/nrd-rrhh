@@ -258,6 +258,18 @@
       const maxWait = 10000;
       const startTime = Date.now();
       
+      function showLoginFallback() {
+        const redirectingScreen = document.getElementById('redirecting-screen');
+        const loginScreen = document.getElementById('login-screen');
+        const appScreen = document.getElementById('app-screen');
+
+        // If the app is already visible, don't bring back the login screen.
+        if (appScreen && !appScreen.classList.contains('hidden')) return;
+
+        if (redirectingScreen) redirectingScreen.classList.add('hidden');
+        if (loginScreen) loginScreen.classList.remove('hidden');
+      }
+      
       const checkNRDCommon = setInterval(() => {
         if (typeof window.NRDCommon !== 'undefined') {
           clearInterval(checkNRDCommon);
@@ -307,52 +319,34 @@
                     console.log('AuthService initialized successfully');
                   } catch (error) {
                     console.error('Error initializing AuthService:', error);
-                    // Fallback: hide redirecting screen and show login
-                    const redirectingScreen = document.getElementById('redirecting-screen');
-                    const loginScreen = document.getElementById('login-screen');
-                    if (redirectingScreen) redirectingScreen.classList.add('hidden');
-                    if (loginScreen) loginScreen.classList.remove('hidden');
+                    // Fallback: hide redirecting screen and show login (only if app not visible)
+                    showLoginFallback();
                   }
                 } else {
                   console.error('AuthService or nrd not available');
-                  // Fallback: hide redirecting screen and show login
-                  const redirectingScreen = document.getElementById('redirecting-screen');
-                  const loginScreen = document.getElementById('login-screen');
-                  if (redirectingScreen) redirectingScreen.classList.add('hidden');
-                  if (loginScreen) loginScreen.classList.remove('hidden');
+                  // Fallback: hide redirecting screen and show login (only if app not visible)
+                  showLoginFallback();
                 }
               } else {
                 console.error('NRD Data Access initialization failed');
-                // Fallback: hide redirecting screen and show login
-                const redirectingScreen = document.getElementById('redirecting-screen');
-                const loginScreen = document.getElementById('login-screen');
-                if (redirectingScreen) redirectingScreen.classList.add('hidden');
-                if (loginScreen) loginScreen.classList.remove('hidden');
+                // Fallback: hide redirecting screen and show login (only if app not visible)
+                showLoginFallback();
               }
             }).catch(error => {
               console.error('Error initializing NRD Data Access:', error);
-              // Fallback: hide redirecting screen and show login
-              const redirectingScreen = document.getElementById('redirecting-screen');
-              const loginScreen = document.getElementById('login-screen');
-              if (redirectingScreen) redirectingScreen.classList.add('hidden');
-              if (loginScreen) loginScreen.classList.remove('hidden');
+              // Fallback: hide redirecting screen and show login (only if app not visible)
+              showLoginFallback();
             });
           } else {
             console.error('initializeNRD not available in NRDCommon');
-            // Fallback: hide redirecting screen and show login
-            const redirectingScreen = document.getElementById('redirecting-screen');
-            const loginScreen = document.getElementById('login-screen');
-            if (redirectingScreen) redirectingScreen.classList.add('hidden');
-            if (loginScreen) loginScreen.classList.remove('hidden');
+            // Fallback: hide redirecting screen and show login (only if app not visible)
+            showLoginFallback();
           }
         } else if (Date.now() - startTime >= maxWait) {
           clearInterval(checkNRDCommon);
           console.error('NRD Common Library not loaded after timeout');
-          // Fallback: hide redirecting screen and show login
-          const redirectingScreen = document.getElementById('redirecting-screen');
-          const loginScreen = document.getElementById('login-screen');
-          if (redirectingScreen) redirectingScreen.classList.add('hidden');
-          if (loginScreen) loginScreen.classList.remove('hidden');
+          // Fallback: hide redirecting screen and show login (only if app not visible)
+          showLoginFallback();
         }
       }, 100);
     })();
