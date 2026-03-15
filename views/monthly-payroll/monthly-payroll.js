@@ -305,36 +305,49 @@ async function showPayrollForm(year = null, month = null) {
 
       <div class="border border-gray-200 p-4 sm:p-6">
         <h3 class="text-base sm:text-lg font-light text-gray-800 mb-4">Empleados Activos</h3>
+        <p class="text-xs text-gray-500 mb-3">Marque "Mensual" si el valor que ingresa es sueldo mensual; si no, se asume sueldo base 30 días.</p>
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead>
               <tr class="border-b-2 border-gray-300">
                 <th class="text-left py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Empleado</th>
-                <th class="text-right py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Salario Base ($)</th>
+                <th class="text-left py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium w-40">Tipo</th>
+                <th class="text-right py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Salario ($)</th>
                 <th class="text-right py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Extras ($)</th>
-                <th class="text-right py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Total ($)</th>
+                <th class="text-right py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Total base 30 días ($)</th>
+                <th class="text-right py-3 px-4 text-xs uppercase tracking-wider text-gray-600 font-medium">Total mensual ($)</th>
               </tr>
             </thead>
             <tbody>
               ${activeEmployees.length === 0 ? `
                 <tr>
-                  <td colspan="4" class="text-center py-8 text-sm text-gray-500">No hay empleados activos para este período</td>
+                  <td colspan="6" class="text-center py-8 text-sm text-gray-500">No hay empleados activos para este período</td>
                 </tr>
               ` : activeEmployees.map(emp => {
                 const existingSalary = salariesByEmployee[emp.id];
-                const existingBase = existingSalary 
-                  ? (existingSalary.monthlySalary || existingSalary.baseSalary30Days || 0)
+                // Mostrar siempre sueldo base 30 días al editar (prioridad baseSalary30Days para no “perder” el valor)
+                const existingMonthly = existingSalary
+                  ? (existingSalary.baseSalary30Days != null && existingSalary.baseSalary30Days !== '' ? Number(existingSalary.baseSalary30Days) : (existingSalary.monthlySalary || 0))
                   : 0;
                 const existingExtras = existingSalary ? (existingSalary.extras || 0) : 0;
-                const existingTotal = existingBase + existingExtras;
-                
+                const existingTotal = existingMonthly + existingExtras;
+                const existingBase30 = existingTotal / 30;
+                const isMonthlyInput = existingSalary && existingSalary.salaryInputType === 'monthly';
+                // Si check desmarcado: input = sueldo base 30 días (mensual/30). Si marcado: input = sueldo mensual.
+                const inputDisplayValue = existingMonthly > 0 ? (isMonthlyInput ? existingMonthly : existingMonthly / 30) : 0;
                 return `
                   <tr class="border-b border-gray-200 hover:bg-gray-50 employee-salary-row" data-employee-id="${emp.id}">
                     <td class="py-3 px-4 text-sm sm:text-base font-medium text-gray-800">${escapeHtml(emp.name || 'Sin nombre')}</td>
                     <td class="py-3 px-4">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" class="employee-input-monthly-check w-4 h-4 text-red-600 border-gray-300 rounded focus:ring-red-500" ${isMonthlyInput ? 'checked' : ''} data-employee-id="${emp.id}" title="Marcar si el valor es sueldo mensual">
+                        <span class="text-sm text-gray-700">Mensual</span>
+                      </label>
+                    </td>
+                    <td class="py-3 px-4">
                       <input type="text" 
                         class="employee-base-input w-full px-3 py-2 border border-gray-300 focus:outline-none focus:border-red-600 text-sm sm:text-base text-right"
-                        value="${existingBase > 0 ? formatDecimalWithComma(Math.round(existingBase)) : ''}"
+                        value="${inputDisplayValue > 0 ? formatDecimalWithComma(Math.round(inputDisplayValue)) : ''}"
                         placeholder="0,00"
                         data-employee-id="${emp.id}">
                     </td>
@@ -345,7 +358,10 @@ async function showPayrollForm(year = null, month = null) {
                         placeholder="0,00"
                         data-employee-id="${emp.id}">
                     </td>
-                    <td class="py-3 px-4 text-right text-sm sm:text-base font-medium text-gray-800 employee-total-cell">
+                    <td class="py-3 px-4 text-right text-sm sm:text-base font-medium text-gray-800 employee-base-total-cell">
+                      ${formatCurrency(Math.round(existingBase30))}
+                    </td>
+                    <td class="py-3 px-4 text-right text-sm sm:text-base font-medium text-gray-800 employee-monthly-total-cell">
                       ${formatCurrency(Math.round(existingTotal))}
                     </td>
                   </tr>
@@ -390,6 +406,27 @@ async function showPayrollForm(year = null, month = null) {
     });
   });
 
+  // Al cambiar el check Mensual: convertir el valor del input (base 30 días ↔ mensual)
+  document.querySelectorAll('.employee-input-monthly-check').forEach(check => {
+    check.addEventListener('change', function () {
+      const row = this.closest('.employee-salary-row');
+      if (!row) return;
+      const baseInput = row.querySelector('.employee-base-input');
+      if (!baseInput) return;
+      const val = parseDecimalWithComma(baseInput.value.trim());
+      if (val == null || val <= 0) {
+        updateEmployeeTotal(baseInput);
+        return;
+      }
+      if (this.checked) {
+        baseInput.value = formatDecimalWithComma(Math.round(val * 30));
+      } else {
+        baseInput.value = formatDecimalWithComma(Math.round((val / 30) * 100) / 100);
+      }
+      updateEmployeeTotal(baseInput);
+    });
+  });
+
   currentView = 'form';
 }
 
@@ -397,21 +434,26 @@ async function showPayrollForm(year = null, month = null) {
  * Update total cell when base or extras change
  */
 function updateEmployeeTotal(input) {
-  const employeeId = input.dataset.employeeId;
   const row = input.closest('.employee-salary-row');
   if (!row) return;
 
   const baseInput = row.querySelector('.employee-base-input');
   const extrasInput = row.querySelector('.employee-extras-input');
-  const totalCell = row.querySelector('.employee-total-cell');
+  const monthlyCheck = row.querySelector('.employee-input-monthly-check');
+  const baseTotalCell = row.querySelector('.employee-base-total-cell');
+  const monthlyTotalCell = row.querySelector('.employee-monthly-total-cell');
 
-  if (!baseInput || !extrasInput || !totalCell) return;
+  if (!baseInput || !extrasInput || !baseTotalCell || !monthlyTotalCell) return;
 
-  const base = parseDecimalWithComma(baseInput.value.trim()) || 0;
+  const baseRaw = parseDecimalWithComma(baseInput.value.trim()) || 0;
   const extras = parseDecimalWithComma(extrasInput.value.trim()) || 0;
-  const total = base + extras;
+  // Si "Mensual" marcado: el input es sueldo mensual. Si desmarcado: el input es sueldo base 30 días (mensual/30).
+  const effectiveMonthly = monthlyCheck && monthlyCheck.checked ? baseRaw : baseRaw * 30;
+  const total = effectiveMonthly + extras;
+  const base30 = total / 30;
 
-  totalCell.textContent = formatCurrency(Math.round(total));
+  baseTotalCell.textContent = formatCurrency(Math.round(base30));
+  monthlyTotalCell.textContent = formatCurrency(Math.round(total));
 }
 
 /**
@@ -443,19 +485,23 @@ async function savePayroll(existingYear = null, existingMonth = null) {
       const employeeId = row.dataset.employeeId;
       const baseInput = row.querySelector('.employee-base-input');
       const extrasInput = row.querySelector('.employee-extras-input');
+      const monthlyCheck = row.querySelector('.employee-input-monthly-check');
       
       if (!employeeId || !baseInput) return;
 
       const baseValue = baseInput.value.trim();
       const extrasValue = extrasInput?.value.trim() || '';
+      const salaryInputType = monthlyCheck && monthlyCheck.checked ? 'monthly' : 'base30';
       
       if (baseValue) {
-        const baseSalary = parseDecimalWithComma(baseValue) || 0;
+        const inputValue = parseDecimalWithComma(baseValue) || 0;
         const extras = parseDecimalWithComma(extrasValue) || 0;
-        const totalSalary = baseSalary + extras;
+        // Si "Mensual" marcado: input es mensual. Si desmarcado: input es base 30 días (mensual/30), convertir a mensual.
+        const monthlyBase = salaryInputType === 'monthly' ? inputValue : inputValue * 30;
+        const totalSalary = monthlyBase + extras;
         
         if (totalSalary > 0) {
-          employeesToProcess.push({ employeeId, baseSalary, extras, totalSalary });
+          employeesToProcess.push({ employeeId, baseSalary: monthlyBase, extras, totalSalary, salaryInputType });
         }
       }
     });
@@ -477,52 +523,15 @@ async function savePayroll(existingYear = null, existingMonth = null) {
     });
 
     // Process each employee
-    for (const { employeeId, baseSalary, extras, totalSalary } of employeesToProcess) {
+    for (const { employeeId, baseSalary, extras, totalSalary, salaryInputType } of employeesToProcess) {
       const existingSalary = salariesByEmployee[employeeId];
       
-      // Determine salary type and calculate values
-      // If employee has previous salaries, try to maintain the type
-      let salaryType = 'monthly';
-      let monthlySalary = baseSalary;
-      let baseSalary30Days = baseSalary;
-      let dailyWage = baseSalary / 30;
-
-      // Check if employee has previous salaries to determine type
-      const employeeSalaries = Object.values(salariesData).filter(s => 
-        s.employeeId === employeeId && s.id !== existingSalary?.id
-      );
-      
-      if (employeeSalaries.length > 0) {
-        // Use the type from the most recent salary
-        const lastSalary = employeeSalaries.sort((a, b) => {
-          if (a.year !== b.year) return b.year - a.year;
-          return b.month - a.month;
-        })[0];
-        
-        if (lastSalary.type === 'daily') {
-          salaryType = 'daily';
-          dailyWage = baseSalary;
-          baseSalary30Days = baseSalary * 30;
-          monthlySalary = baseSalary * 30;
-        } else {
-          salaryType = 'monthly';
-          monthlySalary = baseSalary;
-          baseSalary30Days = baseSalary;
-          dailyWage = baseSalary / 30;
-        }
-      } else if (existingSalary) {
-        // Use existing salary type
-        salaryType = existingSalary.type || 'monthly';
-        if (salaryType === 'daily') {
-          dailyWage = baseSalary;
-          baseSalary30Days = baseSalary * 30;
-          monthlySalary = baseSalary * 30;
-        } else {
-          monthlySalary = baseSalary;
-          baseSalary30Days = baseSalary;
-          dailyWage = baseSalary / 30;
-        }
-      }
+      // En este formulario el usuario SIEMPRE ingresa sueldo base 30 días o mensual (mismo valor).
+      // No multiplicar por 30: el valor ingresado es ya el monto mensual/base 30.
+      const monthlySalary = baseSalary;
+      const baseSalary30Days = baseSalary;
+      const dailyWage = baseSalary / 30;
+      const salaryType = 'monthly';
 
       const salaryData = {
         employeeId,
@@ -532,7 +541,8 @@ async function savePayroll(existingYear = null, existingMonth = null) {
         monthlySalary,
         baseSalary30Days,
         dailyWage,
-        extras
+        extras,
+        salaryInputType: salaryInputType || 'base30'
       };
 
       if (existingSalary) {

@@ -1821,7 +1821,8 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
                   label: license.month ? `${getMonthName(license.month)} ${license.year}` : `${license.year}`,
                   details: `Días tomados: ${license.daysTaken || 0}`,
                   startDate: license.startDate,
-                  endDate: license.endDate
+                  endDate: license.endDate,
+                  notes: license.notes
                 });
               });
               
@@ -1878,6 +1879,9 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
                         <div class="text-xs text-gray-600">
                           ${item.details}
                         </div>
+                        ${item.notes ? `
+                          <div class="text-xs text-gray-600 mt-1 italic">${escapeHtml(item.notes)}</div>
+                        ` : ''}
                         ${item.startDate ? `
                           <div class="text-xs text-gray-500">
                             ${new Date(item.startDate).toLocaleDateString('es-ES')} - 
