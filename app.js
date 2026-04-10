@@ -114,14 +114,20 @@ function waitForNRDAndInitialize() {
 // Start waiting for NRD and NRDCommon
 waitForNRDAndInitialize();
 
+let appInitialized = false;
 function initializeAppForUser(user) {
+  if (appInitialized) {
+    logger.debug('App already initialized, skipping');
+    return;
+  }
+  appInitialized = true;
   logger.info('Initializing app for user', { uid: user.uid, email: user.email });
-  
+
   // Ensure app-screen is visible (AuthService should have done this, but double-check)
   const appScreen = document.getElementById('app-screen');
   const loginScreen = document.getElementById('login-screen');
   const redirectingScreen = document.getElementById('redirecting-screen');
-  
+
   if (appScreen) {
     appScreen.classList.remove('hidden');
     logger.info('App screen shown');
@@ -132,7 +138,7 @@ function initializeAppForUser(user) {
   if (redirectingScreen) {
     redirectingScreen.classList.add('hidden');
   }
-  
+
   // Wait a bit for DOM to be ready, then setup navigation
   setTimeout(() => {
     // Create navigation service if not already created
@@ -141,31 +147,11 @@ function initializeAppForUser(user) {
       logger.error('Could not create NavigationService');
       return;
     }
-    
+
     logger.info('Setting up navigation and switching to dashboard');
     setupNavigationButtons();
     navService.setupNavButtons();
     navService.switchView('dashboard');
-    
-    // Double-check that app-screen is visible
-    const appScreenCheck = document.getElementById('app-screen');
-    if (appScreenCheck && appScreenCheck.classList.contains('hidden')) {
-      logger.warn('App screen was hidden, showing it now');
-      appScreenCheck.classList.remove('hidden');
-    }
-    
-    // Also check that dashboard view is visible
-    const dashboardView = document.getElementById('dashboard-view');
-    if (dashboardView) {
-      if (dashboardView.classList.contains('hidden')) {
-        logger.warn('Dashboard view was hidden, showing it now');
-        dashboardView.classList.remove('hidden');
-      } else {
-        logger.info('Dashboard view is visible');
-      }
-    } else {
-      logger.error('Dashboard view element not found');
-    }
   }, 300);
 }
 
