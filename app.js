@@ -98,6 +98,7 @@ function waitForNRDAndInitialize() {
           initializeAppForUser(user);
         } else {
           logger.debug('User not authenticated, app initialization skipped');
+          appInitialized = false;
         }
       });
     } else if (Date.now() - startTime >= maxWait) {
