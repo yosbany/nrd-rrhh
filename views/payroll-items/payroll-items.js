@@ -826,22 +826,40 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
   }
   
   // Calculate days generated for current year (informative only, not used for salary calculations)
-  // This shows days accumulated from start of current year until today
+  // This shows days accumulated from start of current year until today (or end of year if viewing past)
+  // Con fecha de egreso: el contador se corta al día de egreso, no al día de hoy
   let daysGeneratedCurrentYear = 0;
   try {
     if (employee && employee.startDate) {
       const start = new Date(employee.startDate);
       const currentYearStart = new Date(recordsYearForCalculation, 0, 1); // January 1 of current year
-      const today = new Date(); // Today's date
+      const today = new Date();
       const currentYearEnd = new Date(recordsYearForCalculation, 11, 31); // December 31 of current year
+      const todayYmd = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+      const yearEndYmd = new Date(currentYearEnd.getFullYear(), currentYearEnd.getMonth(), currentYearEnd.getDate());
       
       // Use today if we're in the current year, otherwise use end of year
-      const calculationEnd = today.getFullYear() === recordsYearForCalculation && today <= currentYearEnd
-        ? today
-        : currentYearEnd;
+      let calculationEnd = todayYmd.getFullYear() === recordsYearForCalculation && todayYmd <= yearEndYmd
+        ? todayYmd
+        : yearEndYmd;
+      
+      let hasNoDaysInRecordsYear = false;
+      if (employee.endDate) {
+        const endEmployment = new Date(employee.endDate);
+        const endYmd = new Date(endEmployment.getFullYear(), endEmployment.getMonth(), endEmployment.getDate());
+        if (endYmd.getTime() < currentYearStart.getTime()) {
+          // Egreso antes del 1-ene de este año: 0 días generados en recordsYear
+          hasNoDaysInRecordsYear = true;
+        } else if (endYmd.getFullYear() === recordsYearForCalculation) {
+          if (endYmd.getTime() < calculationEnd.getTime()) {
+            calculationEnd = endYmd;
+          }
+        }
+        // Egreso en un año futuro: no ajustar el tope de este año
+      }
       
       // Check if employee started before or during current year
-      if (start.getTime() <= calculationEnd.getTime()) {
+      if (!hasNoDaysInRecordsYear && start.getTime() <= calculationEnd.getTime()) {
         const actualStart = start.getTime() > currentYearStart.getTime() ? start : currentYearStart;
         const actualEnd = calculationEnd;
         
