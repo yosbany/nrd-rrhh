@@ -35,6 +35,31 @@ const isEmployeeActiveInYear = window.isEmployeeActiveInYear || ((employee, year
   
   return true; // Employee was active during the year
 });
+
+/**
+ * Solo incluye nóminas de cada semestre de aguinaldo hasta el mes de la fecha de egreso.
+ * (Evita contar haberes de meses posteriores al egreso aunque el período del semestre continúe.)
+ */
+function filterAguinaldoSalariesByEndDate(employee, firstSemesterSalaries, secondSemesterSalaries) {
+  if (!employee || !employee.endDate) {
+    return { first: firstSemesterSalaries, second: secondSemesterSalaries };
+  }
+  const end = new Date(employee.endDate);
+  if (isNaN(end.getTime())) {
+    return { first: firstSemesterSalaries, second: secondSemesterSalaries };
+  }
+  const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+  const keepMonth = (s) => {
+    if (!s || s.year == null || s.month == null) return false;
+    const monthStart = new Date(s.year, s.month - 1, 1);
+    return endDay >= monthStart;
+  };
+  return {
+    first: (firstSemesterSalaries || []).filter(keepMonth),
+    second: (secondSemesterSalaries || []).filter(keepMonth)
+  };
+}
+
 const formatNumber = window.formatNumber || ((v) => String(v));
 const formatCurrency = window.formatCurrency || ((v) => '$' + String(v));
 const parseDecimalWithComma = window.parseDecimalWithComma || ((v) => parseFloat(String(v).replace(',', '.')) || null);
@@ -330,6 +355,11 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
   const secondSemesterSalaries = recordsYearSalaries.filter(s => 
     s.month >= 6 && s.month <= 11
   );
+  const { first: firstAguinaldoSemester, second: secondAguinaldoSemester } = filterAguinaldoSalariesByEndDate(
+    employee,
+    firstSemesterSalaries,
+    secondSemesterSalaries
+  );
   
   // Get aguinaldo records for this employee to check if they're already paid
   const allEmployeeAguinaldos = Object.values(aguinaldoData).filter(a => 
@@ -367,11 +397,11 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
   });
   
   // Calculate aguinaldo for first semester
-  // Formula: totalHaberesGravadosDelSemestre / 12
+  // Formula: totalHaberesGravadosDelSemestre / 12 (solo meses hasta fecha de egreso, si aplica)
   // BUT: If already paid, return 0
   let firstSemesterAguinaldo = 0;
-  if (!firstSemesterPaid && firstSemesterSalaries.length > 0) {
-    const totalHaberesGravados = firstSemesterSalaries.reduce((sum, salary) => {
+  if (!firstSemesterPaid && firstAguinaldoSemester.length > 0) {
+    const totalHaberesGravados = firstAguinaldoSemester.reduce((sum, salary) => {
       const base = parseFloat(salary.baseSalary30Days) || 0;
       const extras = parseFloat(salary.extras) || 0;
       return sum + (base + extras);
@@ -383,8 +413,8 @@ function calculateEmployeeSummary(employeeId, viewingYear = null) {
   // Formula: totalHaberesGravadosDelSemestre / 12
   // BUT: If already paid, return 0
   let secondSemesterAguinaldo = 0;
-  if (!secondSemesterPaid && secondSemesterSalaries.length > 0) {
-    const totalHaberesGravados = secondSemesterSalaries.reduce((sum, salary) => {
+  if (!secondSemesterPaid && secondAguinaldoSemester.length > 0) {
+    const totalHaberesGravados = secondAguinaldoSemester.reduce((sum, salary) => {
       const base = parseFloat(salary.baseSalary30Days) || 0;
       const extras = parseFloat(salary.extras) || 0;
       return sum + (base + extras);
@@ -1310,14 +1340,19 @@ async function loadPayrollItems() {
       const secondSemesterSalaries = recordsYearSalaries.filter(s => 
         s.month >= 6 && s.month <= 11
       );
+      const { first: firstSemForFormula, second: secondSemForFormula } = filterAguinaldoSalariesByEndDate(
+        employee,
+        firstSemesterSalaries,
+        secondSemesterSalaries
+      );
       
       // Generate formulas for tooltips
       const daysAccumulatedFormula = getDaysAccumulatedFormula(summary, recordsYear);
       const daysRemainingFormula = getDaysRemainingFormula(summary, recordsYear);
       const vacationSalaryFormula = getVacationSalaryFormula(summary, lastSalaryInfo);
       const licenseNotTakenFormula = getLicenseNotTakenFormula(summary, lastSalaryInfo);
-      const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemesterSalaries);
-      const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemesterSalaries);
+      const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemForFormula);
+      const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemForFormula);
       
       // Check if employee has pending days (días pendientes por tomar)
       // Use the SAME calculation that is displayed in the card to ensure consistency
@@ -1376,10 +1411,19 @@ async function loadPayrollItems() {
       // Double-check: if all displayed values are 0, hasPending should be false
       const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
       
-      // Add special styling if has pending items
-      const cardClass = hasPending 
-        ? 'border-4 border-red-500 p-4 bg-white cursor-pointer hover:border-red-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 relative' 
-        : 'border-2 border-gray-200 p-4 bg-white cursor-pointer hover:border-green-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200';
+      const isEgresado = !!employee.endDate;
+      // Empleado con egreso: tarjeta en gris; si no, pendiente en rojo o al día en verde
+      const cardClass = isEgresado
+        ? 'border-2 border-gray-300 p-4 bg-gray-100 cursor-pointer hover:border-gray-500 hover:shadow-md hover:scale-[1.01] transition-all duration-200'
+        : (hasPending
+          ? 'border-4 border-red-500 p-4 bg-white cursor-pointer hover:border-red-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200 relative'
+          : 'border-2 border-gray-200 p-4 bg-white cursor-pointer hover:border-green-600 hover:shadow-lg hover:scale-[1.02] transition-all duration-200');
+      const headBg = isEgresado ? 'bg-gray-500' : (hasPending ? 'bg-red-600' : 'bg-green-600');
+      const headSub = isEgresado ? 'text-gray-200' : (hasPending ? 'text-red-100' : 'text-green-100');
+      const rowHoverLic = isEgresado ? 'hover:bg-gray-50' : 'hover:bg-green-50';
+      const rowHoverA = isEgresado ? 'hover:bg-gray-50' : 'hover:bg-blue-50';
+      const rowHoverB = isEgresado ? 'hover:bg-gray-50' : 'hover:bg-red-50';
+      const rowHoverC = isEgresado ? 'hover:bg-gray-50' : 'hover:bg-yellow-50';
       
       const card = document.createElement('div');
       card.className = cardClass;
@@ -1388,13 +1432,13 @@ async function loadPayrollItems() {
       // displayYear is already declared above (line 1084)
       
       card.innerHTML = `
-        <div class="-m-4 mb-3 px-4 py-3 ${hasPending ? 'bg-red-600' : 'bg-green-600'} text-white shadow-md">
+        <div class="-m-4 mb-3 px-4 py-3 ${headBg} text-white shadow-md">
           <h3 class="text-lg font-semibold tracking-tight">${escapeHtml(employee.name)}</h3>
-          <p class="text-sm ${hasPending ? 'text-red-100' : 'text-green-100'} mt-0.5">${currentYear}</p>
+          <p class="text-sm ${headSub} mt-0.5">${currentYear}${isEgresado ? ' · Egresado' : ''}</p>
         </div>
         
         <div class="space-y-2.5 text-sm px-1">
-          <div class="py-2.5 px-2 border-b border-gray-200 hover:bg-green-50 transition-colors rounded">
+          <div class="py-2.5 px-2 border-b border-gray-200 ${rowHoverLic} transition-colors rounded">
             <div class="flex justify-between items-center">
               <span class="text-gray-700 font-medium">Saldo Días de Licencia:</span>
               <span class="font-semibold text-green-600 text-base cursor-help text-right" title="${escapeHtml(daysRemainingFormula)}">${formatNumber(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)))}</span>
@@ -1415,17 +1459,17 @@ async function loadPayrollItems() {
             </div>
           </div>
           
-          <div class="flex justify-between items-center py-2.5 px-2 border-b border-gray-200 hover:bg-blue-50 transition-colors rounded">
+          <div class="flex justify-between items-center py-2.5 px-2 border-b border-gray-200 ${rowHoverA} transition-colors rounded">
             <span class="text-gray-700 font-medium">Licencia No Gozada:</span>
             <span class="font-semibold text-blue-600 text-base cursor-help text-right" title="${escapeHtml(licenseNotTakenFormula)}">${formatCurrency(summary.licenseNotTakenSalary || 0)}</span>
           </div>
           
-          <div class="flex justify-between items-center py-2.5 px-2 border-b border-gray-200 hover:bg-red-50 transition-colors rounded">
+          <div class="flex justify-between items-center py-2.5 px-2 border-b border-gray-200 ${rowHoverB} transition-colors rounded">
             <span class="text-gray-700 font-medium">Salario Vacacional:</span>
             <span class="font-semibold text-red-600 text-base cursor-help text-right" title="${escapeHtml(vacationSalaryFormula)}">${formatCurrency(summary.vacationSalary)}</span>
           </div>
           
-          <div class="py-2.5 px-2 border-b border-gray-200 hover:bg-yellow-50 transition-colors rounded">
+          <div class="py-2.5 px-2 border-b border-gray-200 ${rowHoverC} transition-colors rounded">
             <div class="flex justify-between items-center">
               <span class="text-gray-700 font-medium">Saldo de Aguinaldo:</span>
               <span class="font-semibold text-yellow-600 text-base text-right">${formatCurrency((summary.firstSemesterAguinaldo || 0) + (summary.secondSemesterAguinaldo || 0))}</span>
@@ -1555,14 +1599,19 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
   const secondSemesterSalaries = recordsYearSalaries.filter(s => 
     s.month >= 6 && s.month <= 11
   );
+  const { first: firstSemForFormula, second: secondSemForFormula } = filterAguinaldoSalariesByEndDate(
+    employee,
+    firstSemesterSalaries,
+    secondSemesterSalaries
+  );
   
   // Generate formulas for tooltips
   const daysAccumulatedFormula = getDaysAccumulatedFormula(summary, recordsYear);
   const daysRemainingFormula = getDaysRemainingFormula(summary, recordsYear);
   const vacationSalaryFormula = getVacationSalaryFormula(summary, lastSalaryInfo);
   const licenseNotTakenFormula = getLicenseNotTakenFormula(summary, lastSalaryInfo);
-  const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemesterSalaries);
-  const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemesterSalaries);
+  const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemForFormula);
+  const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemForFormula);
   
   // Calculate hasPending using the same logic as in employee cards
   const displayedDaysRemaining = Math.round(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)));
@@ -1610,11 +1659,13 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
   
   // Employee has pending ONLY if they have actual pending items (days > 0 or amounts > 0)
   const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
+  const isEgresado = !!employee.endDate;
+  const detailHeaderBg = isEgresado ? 'bg-gray-600' : (hasPending ? 'bg-red-600' : 'bg-green-600');
   
   // Replace content with employee details page
   payrollContent.innerHTML = `
     <div class="bg-white border border-gray-200 shadow-sm">
-      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 ${hasPending ? 'bg-red-600' : 'bg-green-600'} relative">
+      <div class="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 ${detailHeaderBg} relative">
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-4">
             <button id="back-to-employees-btn" class="flex items-center gap-2 px-3 py-1.5 text-sm bg-white/20 hover:bg-white/30 text-white rounded transition-colors">
@@ -1623,7 +1674,7 @@ async function showEmployeeDetails(employeeId, successMessage = null) {
               </svg>
               Volver
             </button>
-            <h3 class="text-lg sm:text-xl font-semibold tracking-tight text-white">${escapeHtml(employee.name)} - ${recordsYear}</h3>
+            <h3 class="text-lg sm:text-xl font-semibold tracking-tight text-white">${escapeHtml(employee.name)} - ${recordsYear}${isEgresado ? ' <span class="text-sm font-normal text-gray-200">(Egresado)</span>' : ''}</h3>
           </div>
         </div>
       </div>
