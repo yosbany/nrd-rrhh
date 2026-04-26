@@ -1301,6 +1301,7 @@ async function loadPayrollItems() {
     // Create cards container
     const cardsContainer = document.createElement('div');
     cardsContainer.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
+    let renderedCardsCount = 0;
     
     // Filter employees: only show those who were active (vigente) in the selected year
     // and exclude employees with "socio" role
@@ -1430,6 +1431,10 @@ async function loadPayrollItems() {
       const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
       
       const isEgresado = !!employee.endDate;
+      // Egresado sin saldo a favor en el año seleccionado: no mostrar tarjeta
+      if (isEgresado && !hasPending) {
+        return;
+      }
       // Empleado con egreso: tarjeta en gris; si no, pendiente en rojo o al día en verde
       const cardClass = isEgresado
         ? 'border-2 border-gray-300 p-4 bg-gray-100 cursor-pointer hover:border-gray-500 hover:shadow-md hover:scale-[1.01] transition-all duration-200'
@@ -1522,8 +1527,17 @@ async function loadPayrollItems() {
       });
       
       cardsContainer.appendChild(card);
+      renderedCardsCount++;
     });
     
+    if (renderedCardsCount === 0) {
+      cardsContainer.innerHTML = `
+        <div class="col-span-full text-center py-12 border border-gray-200 p-8">
+          <p class="text-gray-600 mb-2">No hay partidas salariales pendientes en ${currentYear}</p>
+          <p class="text-xs text-gray-500">Los empleados egresados sin saldo a favor no se muestran.</p>
+        </div>
+      `;
+    }
     payrollContent.appendChild(cardsContainer);
 }
 
