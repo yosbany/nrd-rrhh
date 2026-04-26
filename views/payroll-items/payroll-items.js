@@ -3053,11 +3053,17 @@ async function showAguinaldoPaymentForm(employeeId, year) {
   const secondSemesterSalaries = currentYearSalaries.filter(s => 
     s.month >= 6 && s.month <= 11
   );
+  const employeeForAg = employeesData[employeeId];
+  const { first: firstAgSem, second: secondAgSem } = filterAguinaldoSalariesByEndDate(
+    employeeForAg,
+    firstSemesterSalaries,
+    secondSemesterSalaries
+  );
   
   // Calculate aguinaldo for first semester
   let firstSemesterAguinaldo = 0;
-  if (firstSemesterSalaries.length > 0) {
-    const totalHaberesGravados = firstSemesterSalaries.reduce((sum, salary) => {
+  if (firstAgSem.length > 0) {
+    const totalHaberesGravados = firstAgSem.reduce((sum, salary) => {
       const base = parseFloat(salary.baseSalary30Days) || 0;
       const extras = parseFloat(salary.extras) || 0;
       return sum + (base + extras);
@@ -3067,8 +3073,8 @@ async function showAguinaldoPaymentForm(employeeId, year) {
   
   // Calculate aguinaldo for second semester
   let secondSemesterAguinaldo = 0;
-  if (secondSemesterSalaries.length > 0) {
-    const totalHaberesGravados = secondSemesterSalaries.reduce((sum, salary) => {
+  if (secondAgSem.length > 0) {
+    const totalHaberesGravados = secondAgSem.reduce((sum, salary) => {
       const base = parseFloat(salary.baseSalary30Days) || 0;
       const extras = parseFloat(salary.extras) || 0;
       return sum + (base + extras);
@@ -3257,22 +3263,38 @@ async function showAguinaldoPaymentForm(employeeId, year) {
     let expectedPaymentMonth = null;
     let expectedPaymentYear = null;
     
+    const employeeForm = employeesData[employeeId];
+    const isLiquidacionEgreso = employeeForm && employeeForm.endDate;
+
     if (semester === 'first') {
       // 1er semestre: Dic displayYear - May year, se paga en Junio del year
       expectedPaymentMonth = 6; // Junio
       expectedPaymentYear = year;
-      isValidPaymentDate = paidYear === expectedPaymentYear && paidMonth === expectedPaymentMonth;
+      if (isLiquidacionEgreso) {
+        // Liquidación por egreso: se puede abonar el aguinaldo en la fecha de finiquito (no obliga a junio)
+        isValidPaymentDate = paidYear === year;
+      } else {
+        isValidPaymentDate = paidYear === expectedPaymentYear && paidMonth === expectedPaymentMonth;
+      }
     } else if (semester === 'second') {
       // 2do semestre: Jun year - Nov year, se paga en Diciembre del year
       expectedPaymentMonth = 12; // Diciembre
       expectedPaymentYear = year;
-      isValidPaymentDate = paidYear === expectedPaymentYear && paidMonth === expectedPaymentMonth;
+      if (isLiquidacionEgreso) {
+        isValidPaymentDate = paidYear === year;
+      } else {
+        isValidPaymentDate = paidYear === expectedPaymentYear && paidMonth === expectedPaymentMonth;
+      }
     }
     
     if (!isValidPaymentDate) {
       const monthNames = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
       const expectedMonthName = monthNames[expectedPaymentMonth - 1];
-      await showError(`El pago del ${semester === 'first' ? '1er' : '2do'} semestre debe realizarse en ${expectedMonthName} ${expectedPaymentYear}`);
+      if (isLiquidacionEgreso) {
+        await showError(`Con fecha de egreso, use una fecha de pago dentro del año ${year} (liquidación / finiquito).`);
+      } else {
+        await showError(`El pago del ${semester === 'first' ? '1er' : '2do'} semestre debe realizarse en ${expectedMonthName} ${expectedPaymentYear}`);
+      }
       return;
     }
 
@@ -3282,8 +3304,8 @@ async function showAguinaldoPaymentForm(employeeId, year) {
 
     try {
       // Parse date string (YYYY-MM-DD) and create date in local timezone to avoid timezone issues
-      const [year, month, day] = paidDateInput.split('-').map(Number);
-      const paidDate = new Date(year, month - 1, day).getTime();
+      const [paidY, paidM, paidD] = paidDateInput.split('-').map(Number);
+      const paidDate = new Date(paidY, paidM - 1, paidD).getTime();
       const semesterText = semester === 'first' ? '1er semestre' : '2do semestre';
       const semesterAmount = semester === 'first' ? 
         Math.round(firstSemesterAguinaldo * 100) / 100 : 
@@ -3291,6 +3313,9 @@ async function showAguinaldoPaymentForm(employeeId, year) {
       
       // Combine notes
       let notes = `Período: ${semesterText}`;
+      if (isLiquidacionEgreso) {
+        notes += ' | Liquidación / egreso';
+      }
       if (notesInput) {
         notes += ` | ${notesInput}`;
       }
