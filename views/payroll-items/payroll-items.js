@@ -1118,6 +1118,44 @@ function calculateEmployeeTotalSummary(employeeId) {
   };
 }
 
+/**
+ * Misma lógica que el borde "pendiente" de la tarjeta: saldo días, salario vacacional o aguinaldo sin abonar.
+ * Usa el summary ya calculado (evita duplicar cálculo).
+ */
+function getPayrollHasPendingFromSummary(employee, recordsYear, displayYear, summary) {
+  const displayedDaysRemaining = Math.round(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)));
+  const hasPendingDays = displayedDaysRemaining > 0;
+  const vacationSalary = Math.round(Math.max(0, summary.vacationSalary || 0));
+  let hasUnpaidVacationSalary = false;
+  if (vacationSalary > 0) {
+    const employeeVacations = Object.values(vacationsData).filter(v => 
+      v && v.employeeId === employee.id && v.year === displayYear && !v.isLicenseNotTaken
+    );
+    hasUnpaidVacationSalary = !employeeVacations.some(v => v.paidDate);
+  }
+  const firstSemesterAguinaldo = Math.round(Math.max(0, summary.firstSemesterAguinaldo || 0));
+  const secondSemesterAguinaldo = Math.round(Math.max(0, summary.secondSemesterAguinaldo || 0));
+  let hasUnpaidAguinaldo = false;
+  if (firstSemesterAguinaldo > 0 || secondSemesterAguinaldo > 0) {
+    const employeeAguinaldos = Object.values(aguinaldoData).filter(a => 
+      a && a.employeeId === employee.id && a.year === recordsYear
+    );
+    const firstSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
+      a.notes && (a.notes.includes('1er semestre') || a.notes.includes('primer semestre'))
+    );
+    const secondSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
+      a.notes && (a.notes.includes('2do semestre') || a.notes.includes('segundo semestre'))
+    );
+    const firstSemesterPaid = firstSemesterAguinaldoRecord && firstSemesterAguinaldoRecord.paidDate;
+    const secondSemesterPaid = secondSemesterAguinaldoRecord && secondSemesterAguinaldoRecord.paidDate;
+    const hasUnpaidFirstSemester = firstSemesterAguinaldo > 0 && !firstSemesterPaid;
+    const hasUnpaidSecondSemester = secondSemesterAguinaldo > 0 && !secondSemesterPaid;
+    hasUnpaidAguinaldo = hasUnpaidFirstSemester || hasUnpaidSecondSemester;
+  }
+  const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
+  return { hasPending, isEgresado: !!employee.endDate };
+}
+
 // Load payroll items (cards view)
 async function loadPayrollItems() {
   const payrollContent = document.getElementById('payroll-items-content');
@@ -1301,7 +1339,6 @@ async function loadPayrollItems() {
     // Create cards container
     const cardsContainer = document.createElement('div');
     cardsContainer.className = 'grid grid-cols-1 md:grid-cols-2 gap-3';
-    let renderedCardsCount = 0;
     
     // Filter employees: only show those who were active (vigente) in the selected year
     // and exclude employees with "socio" role
@@ -1325,11 +1362,33 @@ async function loadPayrollItems() {
       return;
     }
     
-    activeEmployees.forEach(employee => {
-      // Use the same year as in showEmployeeDetails to ensure consistency
-      const recordsYear = currentYear;
-      const displayYear = currentYear - 1;
+    const recordsYear = currentYear;
+    const displayYear = currentYear - 1;
+    const payrollCardRows = activeEmployees.map(employee => {
       const summary = calculateEmployeeSummary(employee.id, recordsYear);
+      const { hasPending, isEgresado } = getPayrollHasPendingFromSummary(employee, recordsYear, displayYear, summary);
+      return { employee, summary, hasPending, isEgresado };
+    });
+    payrollCardRows.sort((a, b) => {
+      const aSettled = a.isEgresado && !a.hasPending;
+      const bSettled = b.isEgresado && !b.hasPending;
+      if (aSettled !== bSettled) return aSettled ? 1 : -1;
+      return (a.employee.name || '').toLowerCase().localeCompare((b.employee.name || '').toLowerCase());
+    });
+    let sectionSeparatorPlaced = false;
+
+    payrollCardRows.forEach((row, rowIndex) => {
+      const { employee, summary, hasPending, isEgresado } = row;
+      const isSettledEgreso = isEgresado && !hasPending;
+      if (isSettledEgreso && !sectionSeparatorPlaced && rowIndex > 0) {
+        const sectionSep = document.createElement('div');
+        sectionSep.className = 'col-span-full border-t border-gray-200 pt-5 mt-3 mb-1';
+        sectionSep.setAttribute('role', 'separator');
+        sectionSep.innerHTML = `<p class="text-xs font-semibold uppercase tracking-wider text-gray-500 px-0.5">Egresados — sin partidas pendientes en ${currentYear}</p>`;
+        cardsContainer.appendChild(sectionSep);
+        sectionSeparatorPlaced = true;
+      }
+
       const totalSummary = calculateEmployeeTotalSummary(employee.id);
       
       // Get last salary info for tooltips
@@ -1372,69 +1431,7 @@ async function loadPayrollItems() {
       const licenseNotTakenFormula = getLicenseNotTakenFormula(summary, lastSalaryInfo);
       const firstSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'first', displayYear, recordsYear, firstSemForFormula);
       const secondSemesterAguinaldoFormula = getAguinaldoFormula(summary, 'second', displayYear, recordsYear, secondSemForFormula);
-      
-      // Check if employee has pending days (días pendientes por tomar)
-      // Use the SAME calculation that is displayed in the card to ensure consistency
-      // The card shows: (daysAccumulated || 0) - (daysTakenCurrentYear || 0)
-      // So we must use the same formula here, not summary.daysRemaining which uses a different calculation
-      const displayedDaysRemaining = Math.round(Math.max(0, (summary.daysAccumulated || 0) - (summary.daysTakenCurrentYear || 0)));
-      const hasPendingDays = displayedDaysRemaining > 0;
-      
-      // Check if vacation salary exists and is not paid
-      // Only consider pending if vacationSalary is greater than 0
-      // Use Math.round to avoid floating point comparison issues
-      const vacationSalary = Math.round(Math.max(0, summary.vacationSalary || 0));
-      const hasVacationSalary = vacationSalary > 0;
-      let hasUnpaidVacationSalary = false;
-      if (hasVacationSalary) {
-        // Look for vacation records for the displayYear (the year being shown in the summary)
-        const employeeVacations = Object.values(vacationsData).filter(v => 
-          v && v.employeeId === employee.id && v.year === displayYear && !v.isLicenseNotTaken
-        );
-        const vacationSalaryPaid = employeeVacations.some(v => v.paidDate);
-        hasUnpaidVacationSalary = !vacationSalaryPaid;
-      }
-      
-      // Check if aguinaldo exists and is not paid (check both semesters)
-      // Only consider pending if aguinaldo amount is greater than 0
-      // Use Math.round to avoid floating point comparison issues
-      const firstSemesterAguinaldo = Math.round(Math.max(0, summary.firstSemesterAguinaldo || 0));
-      const secondSemesterAguinaldo = Math.round(Math.max(0, summary.secondSemesterAguinaldo || 0));
-      const hasFirstSemesterAguinaldo = firstSemesterAguinaldo > 0;
-      const hasSecondSemesterAguinaldo = secondSemesterAguinaldo > 0;
-      let hasUnpaidAguinaldo = false;
-      
-      if (hasFirstSemesterAguinaldo || hasSecondSemesterAguinaldo) {
-        const employeeAguinaldos = Object.values(aguinaldoData).filter(a => 
-          a && a.employeeId === employee.id && a.year === recordsYear
-        );
-        
-        // Check if each semester aguinaldo is paid
-        const firstSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
-          a.notes && (a.notes.includes('1er semestre') || a.notes.includes('primer semestre'))
-        );
-        const secondSemesterAguinaldoRecord = employeeAguinaldos.find(a => 
-          a.notes && (a.notes.includes('2do semestre') || a.notes.includes('segundo semestre'))
-        );
-        
-        const firstSemesterPaid = firstSemesterAguinaldoRecord && firstSemesterAguinaldoRecord.paidDate;
-        const secondSemesterPaid = secondSemesterAguinaldoRecord && secondSemesterAguinaldoRecord.paidDate;
-        
-        const hasUnpaidFirstSemester = hasFirstSemesterAguinaldo && !firstSemesterPaid;
-        const hasUnpaidSecondSemester = hasSecondSemesterAguinaldo && !secondSemesterPaid;
-        hasUnpaidAguinaldo = hasUnpaidFirstSemester || hasUnpaidSecondSemester;
-      }
-      
-      // Employee has pending ONLY if they have actual pending items (days > 0 or amounts > 0)
-      // All values must be checked to ensure we're not showing "Pendiente" when everything is 0
-      // Double-check: if all displayed values are 0, hasPending should be false
-      const hasPending = hasPendingDays || hasUnpaidVacationSalary || hasUnpaidAguinaldo;
-      
-      const isEgresado = !!employee.endDate;
-      // Egresado sin saldo a favor en el año seleccionado: no mostrar tarjeta
-      if (isEgresado && !hasPending) {
-        return;
-      }
+      // hasPending / isEgresado vienen de payrollCardRows (getPayrollHasPendingFromSummary)
       // Empleado con egreso: tarjeta en gris; si no, pendiente en rojo o al día en verde
       const cardClass = isEgresado
         ? 'border-2 border-gray-300 p-4 bg-gray-100 cursor-pointer hover:border-gray-500 hover:shadow-md hover:scale-[1.01] transition-all duration-200'
@@ -1527,17 +1524,8 @@ async function loadPayrollItems() {
       });
       
       cardsContainer.appendChild(card);
-      renderedCardsCount++;
     });
     
-    if (renderedCardsCount === 0) {
-      cardsContainer.innerHTML = `
-        <div class="col-span-full text-center py-12 border border-gray-200 p-8">
-          <p class="text-gray-600 mb-2">No hay partidas salariales pendientes en ${currentYear}</p>
-          <p class="text-xs text-gray-500">Los empleados egresados sin saldo a favor no se muestran.</p>
-        </div>
-      `;
-    }
     payrollContent.appendChild(cardsContainer);
 }
 
