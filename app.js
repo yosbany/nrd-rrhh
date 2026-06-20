@@ -64,98 +64,23 @@ function createNavigationService() {
   return navigationService;
 }
 
-// Initialize app using NRD Data Access
-// Note: AuthService handles showing/hiding app-screen, we just setup navigation
-logger.info('app.js loaded, waiting for NRD to be available');
+logger.info('app.js loaded');
 
-// Wait for window.nrd and NRDCommon to be available (they're initialized in index.html)
-function waitForNRDAndInitialize() {
-  const maxWait = 10000; // 10 seconds
-  const startTime = Date.now();
-  const checkInterval = 100; // Check every 100ms
-  
-  const checkNRD = setInterval(() => {
-    const nrd = window.nrd;
-    const NRDCommon = window.NRDCommon;
-    
-    if (nrd && nrd.auth && NRDCommon) {
-      clearInterval(checkNRD);
-      logger.info('NRD, auth, and NRDCommon available, setting up onAuthStateChanged');
-      
-      // Create navigation service now that NRDCommon is available
-      createNavigationService();
-      
-      // Also listen to the current auth state immediately
-      const currentUser = nrd.auth.getCurrentUser();
-      if (currentUser) {
-        logger.info('Current user found, initializing immediately', { uid: currentUser.uid, email: currentUser.email });
-        initializeAppForUser(currentUser);
-      }
-      
-      nrd.auth.onAuthStateChanged((user) => {
-        logger.info('Auth state changed', { hasUser: !!user, uid: user?.uid, email: user?.email });
-        if (user) {
-          initializeAppForUser(user);
-        } else {
-          logger.debug('User not authenticated, app initialization skipped');
-          appInitialized = false;
-        }
-      });
-    } else if (Date.now() - startTime >= maxWait) {
-      clearInterval(checkNRD);
-      logger.error('NRD, auth, or NRDCommon not available after timeout', { 
-        hasNrd: !!nrd, 
-        hasAuth: !!(nrd && nrd.auth),
-        hasNRDCommon: !!NRDCommon
-      });
-    }
-  }, checkInterval);
-}
-
-// Start waiting for NRD and NRDCommon
-waitForNRDAndInitialize();
-
-let appInitialized = false;
 function initializeAppForUser(user) {
-  if (appInitialized) {
-    logger.debug('App already initialized, skipping');
-    return;
-  }
-  appInitialized = true;
   logger.info('Initializing app for user', { uid: user.uid, email: user.email });
 
-  // Ensure app-screen is visible (AuthService should have done this, but double-check)
-  const appScreen = document.getElementById('app-screen');
-  const loginScreen = document.getElementById('login-screen');
-  const redirectingScreen = document.getElementById('redirecting-screen');
-
-  if (appScreen) {
-    appScreen.classList.remove('hidden');
-    logger.info('App screen shown');
-  }
-  if (loginScreen) {
-    loginScreen.classList.add('hidden');
-  }
-  if (redirectingScreen) {
-    redirectingScreen.classList.add('hidden');
+  const navService = createNavigationService();
+  if (!navService) {
+    logger.error('Could not create NavigationService');
+    return;
   }
 
-  // Wait a bit for DOM to be ready, then setup navigation
-  setTimeout(() => {
-    // Create navigation service if not already created
-    const navService = createNavigationService();
-    if (!navService) {
-      logger.error('Could not create NavigationService');
-      return;
-    }
-
-    logger.info('Setting up navigation and switching to dashboard');
-    setupNavigationButtons();
-    navService.setupNavButtons();
-    navService.switchView('dashboard');
-  }, 300);
+  setupNavigationButtons();
+  navService.setupNavButtons();
+  navService.switchView('dashboard');
 }
 
-// AuthService is now initialized in index.html after NRDCommon loads
-// This ensures it handles the redirecting screen immediately
-// We don't need to initialize it here since it's already done in index.html
+(window.NRDCommon?.startApp || function(fn, opts) {
+  window.__nrdStartQueue = window.__nrdStartQueue || [];
+  window.__nrdStartQueue.push({ onReady: fn, options: opts || {} });
+})(initializeAppForUser, { initDelay: 300 });
