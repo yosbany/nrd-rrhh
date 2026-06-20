@@ -78,13 +78,8 @@
 <body class="bg-white text-black font-sans antialiased">
   <!-- Spinner de procesamiento: inyectado por NRDCommon -->
 
-  <!-- Redirecting Screen -->
-  <div id="redirecting-screen" class="min-h-screen flex items-center justify-center bg-white">
-    <div class="flex flex-col items-center gap-4">
-      <div class="w-12 h-12 border-4 border-gray-200 border-t-red-600 rounded-full animate-spin"></div>
-      <p class="text-sm text-gray-600 font-light" data-auth-status>Redirigiendo...</p>
-    </div>
-  </div>
+  <!-- Auth redirect: spinner unificado via NRDCommon -->
+  <div id="redirecting-screen" class="hidden" aria-hidden="true"></div>
 
   <!-- Login Screen -->
   <div id="login-screen" class="min-h-screen flex items-center justify-center p-4 sm:p-6 hidden">
